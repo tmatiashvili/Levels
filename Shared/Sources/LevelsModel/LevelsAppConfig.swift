@@ -13,6 +13,10 @@ public enum LevelsAppConfig {
     public static var appGroupID: String? { value(appGroupKey) }
     public static var keychainAccessGroup: String? { value(keychainGroupKey) }
     public static var keychainService: String { value(keychainServiceKey) ?? "levels.device-identity" }
+    /// iPhone's Mac pairing item, `<rdns>.levels.hub` (NET-002 R8), in the shared access group.
+    public static var hubPairingService: String {
+        keychainService.replacingOccurrences(of: ".device-identity", with: "") + ".hub"
+    }
 
     /// `levels://device/<uuid>` (UI-003 R7, UI-004 R14).
     public static func deviceURL(_ id: DeviceID) -> URL { URL(string: "levels://device/\(id.recordName)")! }

@@ -118,9 +118,19 @@ public enum HubWidgetPlan {
     /// Reload after a failed fetch.
     public static let afterFailure: TimeInterval = 60 * 60
 
-    /// A fetch from the Mac: given the cached file, returns the merged file (already written
-    /// to the cache when the App Group exists), or `nil` on any failure. Must end within 4 s.
-    public typealias Fetch = @Sendable (SnapshotFile?) async -> SnapshotFile?
+    /// What a widget fetch from the Mac gave.
+    public enum FetchResult: Sendable {
+        /// The merged file (already written to the cache when the App Group exists).
+        case fetched(SnapshotFile)
+        /// The Mac was not reached in time: show the cache, marked away.
+        case failed
+        /// The widget can't fetch at all (no pairing readable from the shared Keychain):
+        /// fall back to variant A (lead's call 29).
+        case unavailable
+    }
+
+    /// A fetch from the Mac, given the cached file. Must end within 4 s.
+    public typealias Fetch = @Sendable (SnapshotFile?) async -> FetchResult
 
     public enum Outcome: Equatable, Sendable { case variantA, cacheFresh, fetched, failed }
 
@@ -131,8 +141,10 @@ public enum HubWidgetPlan {
         if let last = cached.lastFetchAt, now.timeIntervalSince(last) < freshFor, now >= last {
             return (cached, last.addingTimeInterval(afterSuccess), .cacheFresh)
         }
-        if let fetched = await fetch(cached) {
-            return (fetched, now.addingTimeInterval(afterSuccess), .fetched)
+        switch await fetch(cached) {
+        case .fetched(let fetched): return (fetched, now.addingTimeInterval(afterSuccess), .fetched)
+        case .unavailable: return (cached, nil, .variantA)
+        case .failed: break
         }
         var away = cached
         if case .awayFromHub = cached.syncStatus {} else {
@@ -236,7 +248,7 @@ public struct DevicesWidgetView: View {
     }
 
     public var body: some View {
-        if entry.snapshot == nil || entry.rows.isEmpty {
+        if entry.snapshot == nil || entry.rows.isEmpty || entry.isNotPaired {  // NET-004 R12
             EmptyWidgetView(entry: entry)
         } else {
             switch family {

@@ -36,7 +36,7 @@ public struct EmptyStateView: View {
             Group {
                 if isLocalOnly {
                     #if os(iOS)
-                    Text("Only this iPhone shows up for now. Your Mac and its accessories appear once Levels can connect to your Mac.", bundle: .module)
+                    Text("Your Mac's levels appear after it connects.", bundle: .module)  // NET-004 R11
                     #else
                     Text("Only this Mac and its accessories show up for now.", bundle: .module)
                     #endif

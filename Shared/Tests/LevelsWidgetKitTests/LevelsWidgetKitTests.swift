@@ -174,13 +174,13 @@ struct HubWidgetPlanTests {
 
     @Test func AC8_goodFetchUsesItAndReloadsIn15Minutes() async {
         let fetched = SnapshotFile(ownDeviceID: id(1), syncStatus: .localOnly, lastFetchAt: now, devices: [phone, mac])
-        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in fetched }
+        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in .fetched(fetched) }
         #expect(plan.outcome == .fetched && plan.snapshot == fetched)
         #expect(plan.reloadAt == now + 15 * 60)
     }
 
     @Test func AC8_failedFetchUsesCacheMarkedAwayAndReloadsIn60Minutes() async {
-        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in nil }
+        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in .failed }
         #expect(plan.outcome == .failed)
         #expect(plan.snapshot?.syncStatus == .awayFromHub(lastContactAt: now - 3600))
         #expect(plan.reloadAt == now + 60 * 60)
@@ -188,14 +188,17 @@ struct HubWidgetPlanTests {
 
     @Test func freshCacheDoesNotFetch() async {
         let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 60), now: now) { _ in
-            Issue.record("fetched"); return nil
+            Issue.record("fetched"); return .failed
         }
         #expect(plan.outcome == .cacheFresh && plan.reloadAt == now - 60 + 15 * 60)
     }
 
     @Test func notPairedOrNoFetchIsVariantA() async {
-        #expect(await HubWidgetPlan.resolve(cached: cached(lastFetch: nil, status: .notPaired), now: now) { _ in nil }.outcome == .variantA)
+        #expect(await HubWidgetPlan.resolve(cached: cached(lastFetch: nil, status: .notPaired), now: now) { _ in .failed }.outcome == .variantA)
         #expect(await HubWidgetPlan.resolve(cached: cached(lastFetch: nil), now: now, fetch: nil).outcome == .variantA)
+        // The widget can't read the shared Keychain pairing: variant A, not away.
+        let a = await HubWidgetPlan.resolve(cached: cached(lastFetch: nil), now: now) { _ in .unavailable }
+        #expect(a.outcome == .variantA && a.snapshot?.syncStatus == .localOnly && a.reloadAt == nil)
     }
 
     @Test func AC6_AC7_entryFlags() {

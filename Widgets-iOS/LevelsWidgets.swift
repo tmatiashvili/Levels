@@ -1,8 +1,8 @@
-// Widgets-iOS entry point (ADR-0003, UI-003, NET-004 variant A). Widget extensions link only
-// LevelsModel, LevelsUI and LevelsWidgetKit: never LevelsSync or LevelsReaders (ADR-0003 §3,
-// SYNC-001 R14). The widget reads the App Group snapshot cache the app writes and never
-// fetches. Variant B (the widget also fetches from the Mac, lead's call 29) needs LevelsNet
-// and comes with the hub client.
+// Widgets-iOS entry point (ADR-0003, UI-003, NET-004 variants A + B, lead's call 29). Widget
+// extensions link LevelsModel, LevelsUI, LevelsWidgetKit and LevelsNet: never LevelsSync or
+// LevelsReaders (ADR-0003 §3, SYNC-001 R14). The widget reads the App Group snapshot cache the
+// app writes (A) and, when that is older than 15 minutes, fetches from the paired Mac (B,
+// WidgetHubFetch).
 //
 // Home Screen families reuse LevelsWidgetKit's views; the Lock Screen (accessory) families
 // are drawn here, from the same `DeviceEntry`.
@@ -28,7 +28,7 @@ struct PhoneDevicesWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: LevelsDevicesWidget.kind, intent: SelectDeviceIntent.self,
-                               provider: DevicesProvider()) { entry in
+                               provider: DevicesProvider(fetch: WidgetHubFetch.make())) { entry in
             PhoneWidgetView(entry: entry)
         }
         .configurationDisplayName(Text("Battery Levels"))
@@ -144,7 +144,8 @@ struct RectangularDevicesView: View {
     }
 
     static func emptyText(_ entry: DeviceEntry) -> String {
-        entry.snapshot == nil ? String(localized: "Open Levels to start") : String(localized: "No devices")
+        if entry.isNotPaired { return String(localized: "Open Levels to connect your Mac") }  // NET-004 R12
+        return entry.snapshot == nil ? String(localized: "Open Levels to start") : String(localized: "No devices")
     }
 }
 
