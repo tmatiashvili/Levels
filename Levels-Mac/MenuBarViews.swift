@@ -42,23 +42,28 @@ struct MenuBarPopover: View {
 struct DeviceWindowView: View {
     @Environment(MacAppModel.self) private var model
     @Environment(\.openSettings) private var openSettings
+    /// HIS-001: the selected device's history is pushed on top of the list.
+    @State private var path: [DeviceID] = []
 
     var body: some View {
         let ideal = Self.idealSize(height: PopoverLayout.height(rows: model.store.rows, state: model.store.state,
                                                                 isReportingOff: model.store.isReportingOff))
-        DevicesPanel(highlighted: model.highlighted)
-            .frame(minWidth: Self.minSize.width, idealWidth: ideal.width, maxWidth: 560,
-                   minHeight: Self.minSize.height, idealHeight: ideal.height)
-            .onOpenURL { url in
-                _ = model.handle(url)
-                NSApp.activate()
-                openSettingsIfRequested()
-            }
-            .onAppear {
-                NSApp.activate()
-                openSettingsIfRequested()
-            }
-            .onChange(of: model.settingsRequested) { openSettingsIfRequested() }
+        NavigationStack(path: $path) {
+            DevicesPanel(highlighted: model.highlighted, onSelect: { path.append($0.id) })  // HIS-001 R8
+                .navigationDestination(for: DeviceID.self) { id in historyDetail(id) }
+        }
+        .frame(minWidth: Self.minSize.width, idealWidth: ideal.width, maxWidth: 560,
+               minHeight: Self.minSize.height, idealHeight: ideal.height)
+        .onOpenURL { url in
+            _ = model.handle(url)
+            NSApp.activate()
+            openSettingsIfRequested()
+        }
+        .onAppear {
+            NSApp.activate()
+            openSettingsIfRequested()
+        }
+        .onChange(of: model.settingsRequested) { openSettingsIfRequested() }
     }
 
     /// Smallest useful window: one row plus the footer, popover width (UI-004 R6).
@@ -68,6 +73,19 @@ struct DeviceWindowView: View {
     /// window chrome (UI-004 R6, MAC-001 R2a). Later opens keep the user's size.
     static func idealSize(height popoverHeight: CGFloat) -> CGSize {
         CGSize(width: 360, height: max(minSize.height, popoverHeight))
+    }
+
+    /// HIS-001 R8: a row's 7-day chart; the row stays live, so a new report reloads it.
+    @ViewBuilder private func historyDetail(_ id: DeviceID) -> some View {
+        if let row = model.store.rows.first(where: { $0.id == id }) {
+            DeviceHistoryView(row: row) { [model] ids in await model.historySamples(ids) }
+                .frame(minWidth: 360, minHeight: 320)
+                .navigationTitle(row.name)
+        } else {
+            Text("This device is no longer in the list.")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     /// R5: Settings opens only from SwiftUI, once per request.
@@ -84,10 +102,12 @@ struct DevicesPanel: View {
     @Environment(MacAppModel.self) private var model
     @Environment(\.openSettings) private var openSettings
     let highlighted: DeviceID?
+    /// HIS-001: the device window opens a row's history; the popover passes `nil` (R11).
+    var onSelect: ((DeviceRowModel) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
-            DeviceList(store: model.store, showsOldDevices: false, highlighted: highlighted)  // old devices: Settings (R9)
+            DeviceList(store: model.store, showsOldDevices: false, highlighted: highlighted, onSelect: onSelect)  // old devices: Settings (R9)
                 .scrollContentBackground(.hidden)
                 .environment(\.isLocalOnly, true)  // owner decision K: this build has no other devices
             Divider()
