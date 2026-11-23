@@ -49,13 +49,26 @@ The Mac app works today on the free team, local only: it shows this Mac's own ba
 4. **Add the widget.** Right-click the desktop → Edit Widgets…, search "Levels", drag the small or medium "Battery Levels" widget onto the desktop. Clicking it opens the Levels device window.
 5. **Rebuild every week.** The free profile lasts 7 days. After that the app may stop launching: build again in Xcode (⌘B or ⌘R) and, if you use a copy, replace it with the new `Levels.app`.
 
-What the free build does not do yet: other devices (needs iCloud), push, and a widget device picker. With no other devices the menu-bar label is the app symbol only (UI-004 R3), so it doesn't repeat the macOS battery item; with other devices it shows the lowest of them (UI-004 R1).
+### Connect your iPhone to the Mac
+
+The Mac is the hub on your home Wi-Fi (owner decision M). Pair once:
+
+1. **On the Mac:** click the Levels menu-bar item → ⋯ → Settings… → iPhone → **Pair iPhone…**. A 6-digit code shows for 2 minutes.
+2. **On the iPhone:** open Levels → ⚙ Settings → Mac → **Connect to your Mac** (or tap **Connect** on the card at the top of the list), then **Continue**.
+3. **Allow Local Network** when the iPhone asks ("Levels would like to find and connect to devices on your local network"). If you tapped Don't Allow: Settings → Privacy & Security → Local Network → Levels on.
+4. **On the iPhone:** pick "Levels-…" (your Mac), type the 6-digit code from the Mac and tap **Connect**. It says "Connected to <your Mac>".
+5. **On the Mac:** if macOS asks whether Levels may accept incoming network connections, click **Allow**.
+6. The iPhone and the Mac must be on the same Wi-Fi, with the Mac awake. Away from home the iPhone shows "Away from your Mac" and the last levels it got.
+
+To undo: iPhone Settings → Mac → **Forget this Mac**; Mac Settings → iPhone → Remove.
+
+What the free build does not do yet: devices beyond this Mac and one paired iPhone (needs iCloud), push, and a widget device picker. With no other devices the menu-bar label is the app symbol only (UI-004 R3), so it doesn't repeat the macOS battery item; with other devices it shows the lowest of them (UI-004 R1).
 
 Check it worked: `log show --predicate 'subsystem BEGINSWITH "com.tmatiashvili"' --last 2m` shows `Report launch: <name> level=63 …` and, in Debug builds, the `snapshot.json` it wrote; compare with `pmset -g batt`. Terminal can't read `~/Library/Group Containers/<TEAMID>.com.tmatiashvili.levels/` directly (macOS protects other apps' group containers), which is why the Debug log prints the file.
 
 ## Try it on the iPhone
 
-The iPhone app works today on the free team, local only (owner decision M, before the Mac hub client lands): it shows this iPhone's own battery in the app and in Home Screen and Lock Screen widgets. The Mac and its accessories appear once the hub client (NET-003) is wired in behind the same `BatterySyncing` seam.
+The iPhone app works on the free team with the Mac as its hub (owner decision M, NET-003/NET-004): it shows this iPhone's battery, and after pairing (see "Connect your iPhone to the Mac" above) the Mac's battery and its accessories, in the app and in Home Screen and Lock Screen widgets. The app updates live while it is open on the home Wi-Fi; the widgets read the cache the app writes and also ask the Mac themselves when that cache is older than 15 minutes.
 
 1. **Build and install** (iPhone connected by cable or on the same Wi-Fi, Developer Mode on):
    ```sh
@@ -67,7 +80,7 @@ The iPhone app works today on the free team, local only (owner decision M, befor
    ```
    Or pick the `Levels-iOS` scheme and the iPhone in Xcode and press ⌘R. `xcrun devicectl list devices` shows the UDID.
 2. **Trust the developer once.** If the launch fails with "profile has not been explicitly trusted", open Settings → General → VPN & Device Management → Apple Development: <your Apple ID> → Trust. iOS forgets the trust when the last app of this developer is deleted, so it can come back after uninstalling.
-3. **Use it.** The list shows this iPhone; pull down to refresh (reports `.userRefresh`). ⚙ opens Settings: rename, the Mac section (Connect comes with the hub), Shortcuts setup, hidden devices, Remove all my data.
+3. **Use it.** The list shows this iPhone; pull down to refresh (reports `.userRefresh`). ⚙ opens Settings: rename, the Mac section (Connect, Pair again, Forget), Shortcuts setup, hidden devices, Remove all my data.
 4. **Add widgets.** Home Screen: touch and hold → Edit → Add Widget → Levels → small, medium or large "Battery Levels". Lock Screen: touch and hold → Customize → Lock Screen → widgets → Levels (circular, rectangular, inline). A tap opens `levels://device/<uuid>`.
 5. **Keep it fresh.** Set up the "Report Battery" automations (RPT-002; the app's hint card and Settings → "Set up Shortcuts automation" show the steps). Background refresh runs too, when iOS allows it.
 6. **Rebuild every week.** The free profile lasts 7 days.

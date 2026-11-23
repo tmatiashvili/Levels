@@ -84,6 +84,7 @@ UI-002 and UI-003 assume iCloud: their empty states, banners, "Remove" and "Abou
 - [ ] AC7 — Given `.notPaired`, then every widget family shows "Open Levels to connect your Mac" or its accessory equivalent (R12).
 - [ ] AC8 — Variant B only: given a fake fetch that returns devices, then the timeline uses them and the policy is `.after(now + 15 min)`; given it fails, then the cache is used and the policy is `.after(now + 60 min)` (R14).
 - [ ] AC9 — Probe result recorded: which variant was built and why (R14).
+  - **Recorded 2026-11-24:** built **A + B** (lead's call 29). The probe showed App Group, widget networking and Bonjour work on the free team. The widget fetches when the cache is older than 15 min (`HubWidgetPlan`, `Widgets-iOS/WidgetHubFetch.swift`). Reading the shared-Keychain pairing from the widget is not yet verified on hardware (needs a paired iPhone); when the widget can't read it, it falls back to A by itself (`FetchResult.unavailable`, logged in category `widget`).
 - [ ] AC10 — On real hardware: pair, then close the app; plug in the Mac. Variant A: the widget updates the next time the app runs. Variant B: the widget updates within its next reload (record the delay; target under 30 min).
 - [ ] AC11 — On real hardware: VoiceOver reads the away banner and the Connect card in a sensible order.
 
