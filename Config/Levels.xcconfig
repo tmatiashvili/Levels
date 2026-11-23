@@ -2,14 +2,16 @@
 // Set at project level ("Based on Configuration File") and #included by each
 // per-target file in this folder.
 //
-// FILL IN BEFORE THE FIRST BUILD (owner decision B: placeholders until now):
-//   DEVELOPMENT_TEAM  your 10-character Team ID (Xcode > Settings > Accounts)
-//   LEVELS_RDNS       your reverse-DNS prefix, e.g. com.example
+// The owner's IDs (filled in 2026-11-23 when Levels.xcodeproj was created):
+//   DEVELOPMENT_TEAM  10-character Team ID (Xcode > Settings > Accounts). For
+//                     now this is the owner's free Personal Team (SETUP.md,
+//                     "Free Personal Team").
+//   LEVELS_RDNS       reverse-DNS prefix
 // Bundle IDs, App Group IDs, the iCloud container and the keychain group are
 // all derived from these two values; nothing else in the repo needs editing.
 
-DEVELOPMENT_TEAM = <TEAMID>
-LEVELS_RDNS = <rdns>
+DEVELOPMENT_TEAM = N5P82JNFSC
+LEVELS_RDNS = com.tmatiashvili
 
 CODE_SIGN_STYLE = Automatic
 
