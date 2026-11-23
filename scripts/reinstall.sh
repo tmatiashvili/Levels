@@ -94,7 +94,7 @@ local_date() {
 find_iphone() {
   local list
   list="$(xcrun devicectl list devices 2>/dev/null \
-    | grep -E 'physical' | grep -E 'iPhone' | grep -E 'available' || true)"
+    | grep -E 'physical' | grep -E 'iPhone' | grep -E 'available|connected' || true)"
   if [ -n "$device" ]; then
     grep -q -- "$device" <<<"$list" && echo "$device"
     return 0
