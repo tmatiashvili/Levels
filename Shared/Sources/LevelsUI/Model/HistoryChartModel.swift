@@ -91,7 +91,6 @@ public struct HistoryChartModel: Equatable, Sendable {
             let visible = input.samples
                 .filter { $0.date >= start.addingTimeInterval(-HistoryPolicy.gapThreshold) && $0.date <= now }
                 .sorted { $0.minute < $1.minute }
-            levels += visible.filter { $0.date >= start }.map(\.level)
             var segment = -1
             var previous: HistorySample?
             var current: [(HistorySample, Date)] = []  // sample, where its state ends
@@ -129,6 +128,18 @@ public struct HistoryChartModel: Equatable, Sendable {
             }
         }
         self.points = points
+        // Low/high over what the window shows: points inside it, plus the level where a
+        // segment crosses the left edge (interpolated), not the sample before the edge.
+        for name in seriesNames {
+            for seg in Dictionary(grouping: points.filter { $0.series == name }, by: \.segment).values {
+                levels += seg.filter { $0.date >= start }.map(\.level)
+                if let i = seg.firstIndex(where: { $0.date >= start }), i > 0 {
+                    let a = seg[i - 1], b = seg[i]
+                    let f = start.timeIntervalSince(a.date) / b.date.timeIntervalSince(a.date)
+                    levels.append(Int((Double(a.level) + f * Double(b.level - a.level)).rounded()))
+                }
+            }
+        }
         bands = Self.merge(charging, kind: .charging, clip: domain) + Self.merge(lowPower, kind: .lowPower, clip: domain)
         low = levels.min()
         high = levels.max()

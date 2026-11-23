@@ -35,10 +35,8 @@ public enum HistoryPolicy {
         let index = samples.lastIndex(where: { $0.minute <= c.minute }).map { $0 + 1 } ?? 0
         if index > 0 {
             let previous = samples[index - 1]
-            if previous.minute == c.minute {  // same minute: the latest reading wins
-                var merged = c
-                merged.endsSegment = c.endsSegment || previous.endsSegment
-                samples[index - 1] = merged
+            if previous.minute == c.minute {  // same minute: the latest reading wins, flags included
+                samples[index - 1] = c
                 return
             }
             let interval = TimeInterval(c.minute - previous.minute) * 60

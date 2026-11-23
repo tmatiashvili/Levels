@@ -70,6 +70,16 @@ private func airPodsComponents(at date: Date) -> [DeviceBattery] {
         #expect(w.count == 2)
     }
 
+    @Test func sameMinuteLatestFlagWins() {
+        let base = now.addingTimeInterval(-2 * minute)
+        let sleep = HistorySample(date: base.addingTimeInterval(5), level: 50, isCharging: false, endsSegment: true)
+        let wake = HistorySample(date: base.addingTimeInterval(50), level: 50, isCharging: false)
+        let sleepThenWake = HistoryPolicy.appending(wake, to: [sleep], now: now)
+        #expect(sleepThenWake.count == 1 && !sleepThenWake[0].endsSegment)
+        let wakeThenSleep = HistoryPolicy.appending(sleep, to: [wake], now: now)
+        #expect(wakeThenSleep.count == 1 && wakeThenSleep[0].endsSegment)
+    }
+
     @Test func ac9_futureSampleIsDropped() {
         let s = HistoryPolicy.appending(sample(10 * minute), to: [sample(-30 * minute)], now: now)
         #expect(s.count == 1)
@@ -171,6 +181,29 @@ private func airPodsComponents(at date: Date) -> [DeviceBattery] {
         clock.withLock { $0 = now }
         await HistoryStore(directory: dir, now: { now }).pruneAll()
         #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func undecodableFilesSurvivePruneAndARecordReplacesThem() async throws {
+        let dir = tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let newer = DeviceID(UUID()), corrupt = DeviceID(UUID())
+        let newerURL = dir.appending(path: "\(newer.recordName).history")
+        let corruptURL = dir.appending(path: "\(corrupt.recordName).history")
+        let newerBytes = Data([2, 0, 0, 0, 0, 1, 2, 3, 4])
+        try newerBytes.write(to: newerURL)
+        try Data([1, 0, 0, 0, 0, 7]).write(to: corruptURL)
+        let store = HistoryStore(directory: dir, now: { now })
+        await store.pruneAll()
+        #expect(await store.samples(for: newer).isEmpty)
+        await store.pruneAll()
+        #expect(try Data(contentsOf: newerURL) == newerBytes)
+        #expect(FileManager.default.fileExists(atPath: corruptURL.path))
+        let reading = DeviceBattery(id: corrupt, name: "Mouse", kind: .mac, level: 40, isCharging: false, updatedAt: now)
+        await store.record([reading], reason: .batteryChange)
+        #expect(try HistoryCodec.decode(Data(contentsOf: corruptURL)).map(\.level) == [40])
+        await store.pruneAll()
+        #expect(await HistoryStore(directory: dir, now: { now }).samples(for: corrupt).count == 1)
     }
 
     @Test func unreadableFileReadsAsEmpty() async throws {

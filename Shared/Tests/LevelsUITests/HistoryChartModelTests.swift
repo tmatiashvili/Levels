@@ -98,4 +98,11 @@ private func model(_ samples: [HistorySample], range: HistoryRange = .day) -> Hi
         let m = model([s(-1 * hour, 50), s(-2 * hour, 60), s(-90 * minute, 55)])
         #expect(m.points.map(\.level).prefix(3) == [60, 55, 50])
     }
+
+    @Test func summaryIgnoresTheSampleBeforeTheLeftEdge() {
+        // 10 % at 24h20m ago rising to 70 % at 23h50m ago: the edge (24h ago) is at 50 %.
+        let m = model([s(-(24 * hour + 20 * minute), 10), s(-(23 * hour + 50 * minute), 70), s(-(23 * hour + 30 * minute), 80)])
+        #expect(m.low == 50)
+        #expect(m.high == 80)
+    }
 }

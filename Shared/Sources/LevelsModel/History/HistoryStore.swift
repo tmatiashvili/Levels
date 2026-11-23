@@ -13,6 +13,9 @@ public actor HistoryStore {
     private let now: @Sendable () -> Date
     /// Loaded files (pruned), by device.
     private var cache: [DeviceID: [HistorySample]] = [:]
+    /// Files that failed to decode (newer format, corruption). Reads treat them as empty, but
+    /// only a real ``record(_:reason:)`` for that device replaces them; pruning never deletes them.
+    private var unreadable: Set<DeviceID> = []
     private var lastSweep: Date?
 
     /// - Parameter directory: e.g. `Application Support/<bundle id>/History`.
@@ -48,7 +51,7 @@ public actor HistoryStore {
     public func samples(for id: DeviceID) -> [HistorySample] {
         let before = load(id)
         let after = HistoryPolicy.pruned(before, now: now())
-        if after != before {
+        if after != before, !unreadable.contains(id) {
             cache[id] = after
             write(after, for: id)
         }
@@ -69,6 +72,7 @@ public actor HistoryStore {
         for url in urls where url.pathExtension == Self.fileExtension {
             guard let id = DeviceID(recordName: url.deletingPathExtension().lastPathComponent) else { continue }
             let before = load(id)
+            guard !unreadable.contains(id) else { continue }  // keep a file we can't read
             let after = HistoryPolicy.pruned(before, now: t)
             if after.isEmpty { removed += 1 }
             if after != before || after.isEmpty {
@@ -82,6 +86,7 @@ public actor HistoryStore {
     /// Deletes one device's history ("Remove", R12).
     public func remove(_ id: DeviceID) {
         cache[id] = []
+        unreadable.remove(id)
         try? FileManager.default.removeItem(at: url(for: id))
     }
 
@@ -89,6 +94,7 @@ public actor HistoryStore {
     /// A folder that is already gone is not an error.
     public func removeAll() throws {
         cache = [:]
+        unreadable = []
         do {
             try FileManager.default.removeItem(at: directory)
         } catch let error as CocoaError where error.code == .fileNoSuchFile {
@@ -110,6 +116,7 @@ public actor HistoryStore {
             do {
                 samples = try HistoryCodec.decode(data)
             } catch {
+                unreadable.insert(id)
                 Self.logger.error("Unreadable history for \(id.recordName, privacy: .public): \(String(describing: error), privacy: .public)")
             }
         }
@@ -126,6 +133,7 @@ public actor HistoryStore {
             }
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try HistoryCodec.encode(samples).write(to: url, options: .atomic)
+            unreadable.remove(id)  // replaced by a real write
         } catch {
             // The in-memory copy keeps the samples; the next write retries.
             Self.logger.error("History write failed for \(id.recordName, privacy: .public): \(String(describing: error), privacy: .public)")
