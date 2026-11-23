@@ -30,6 +30,8 @@ import os
     /// MAC-003: connected accessories (IOKit HID + system_profiler), parent = this Mac.
     @ObservationIgnored let accessories: AccessoryReporter
     @ObservationIgnored let sync: any BatterySyncing
+    /// HIS-001: local 7-day history (lead's call 19), fed by every accepted report.
+    @ObservationIgnored let history: HistoryStore
     @ObservationIgnored private let local: LocalOnlySyncService
     @ObservationIgnored private let reporting: ReportingSetting
     @ObservationIgnored private let identity: any DeviceIdentityProviding
@@ -58,7 +60,10 @@ import os
             Self.logger.notice("Requested widget reload")
             relay.fire()
         })
-        let sync = LoggingSync(base: local, cacheURL: cache.fileURL, onReport: { relay.fire() })
+        // HIS-001: records accepted reports of both reporters into the local history.
+        let history = HistoryStore(directory: HistoryStore.defaultDirectory(bundleID: Bundle.main.bundleIdentifier))
+        let recording = HistoryRecordingSync(base: local, history: history, reporting: reporting)
+        let sync = LoggingSync(base: recording, cacheURL: cache.fileURL, onReport: { relay.fire() })
         let identity = CachingIdentity(KeychainDeviceIdentity(service: LevelsAppConfig.keychainService,
                                                               accessGroup: LevelsAppConfig.keychainAccessGroup))
         let reporter = BatteryReporter(reader: IOKitBatteryReader(), sync: sync, kind: .mac,
@@ -69,16 +74,20 @@ import os
                                             reporting: reporting)
         let source = MacSnapshotSource(
             base: SnapshotCacheSource(cache: cache, preferences: preferences, reporting: reporting,
-                                      removeAllData: { try await local.removeAllData() }) { reason in
+                                      removeAllData: {
+                                          try await history.removeAll()  // HIS-001 R12, before the cache reset
+                                          try await local.removeAllData()
+                                      }) { reason in
                 await reporter.report(reason: reason)
             },
-            reporter: reporter, accessories: accessories, sync: sync,
+            reporter: reporter, accessories: accessories, sync: sync, history: history,
             onDisplayPreferencesChanged: { await local.displayPreferencesChanged() })
         relay.set { source.notifyChanged() }
 
         self.local = local
         self.reporting = reporting
         self.sync = sync
+        self.history = history
         self.identity = identity
         self.reporter = reporter
         self.accessories = accessories
@@ -91,6 +100,7 @@ import os
         guard !started else { return }
         started = true
         await local.start()
+        await history.pruneAll()  // HIS-001 R5: launch prune
         loginItem.registerOnFirstLaunchIfNeeded()  // R6
         do {  // R7: make sure the device ID exists before reporting
             let id = try identity.currentDeviceID()
@@ -156,6 +166,11 @@ import os
     /// The refresh button and ⌘R (UI-004 R6, R7): `.userRefresh`.
     func userRefresh() {
         Task { await store.refresh() }
+    }
+
+    /// HIS-001 R8: the samples behind a device window row.
+    nonisolated func historySamples(_ ids: [DeviceID]) async -> [DeviceID: [HistorySample]] {
+        await history.samples(for: ids)
     }
 
     /// `levels://` routing (MAC-001 R2a, R5; UI-004 R14).
@@ -237,14 +252,16 @@ final class MacSnapshotSource: DeviceSnapshotSource {
     let reporter: BatteryReporter
     let accessories: AccessoryReporter
     let sync: any BatterySyncing
+    let history: HistoryStore
     let onDisplayPreferencesChanged: @Sendable () async -> Void
 
     init(base: SnapshotCacheSource, reporter: BatteryReporter, accessories: AccessoryReporter, sync: any BatterySyncing,
-         onDisplayPreferencesChanged: @escaping @Sendable () async -> Void) {
+         history: HistoryStore, onDisplayPreferencesChanged: @escaping @Sendable () async -> Void) {
         self.base = base
         self.reporter = reporter
         self.accessories = accessories
         self.sync = sync
+        self.history = history
         self.onDisplayPreferencesChanged = onDisplayPreferencesChanged
     }
 
@@ -263,7 +280,10 @@ final class MacSnapshotSource: DeviceSnapshotSource {
     }
 
     func setThisDeviceName(_ name: String?) async { await base.setThisDeviceName(name) }
-    func remove(_ id: DeviceID) async throws { try await base.remove(id) }
+    func remove(_ id: DeviceID) async throws {
+        try await base.remove(id)
+        await history.remove(id)  // HIS-001 R12
+    }
 
     /// Stops both reporters and waits for their in-flight reports, then removes under the sync
     /// service's gate (which also turns reporting off). On failure the reporter runs again.
