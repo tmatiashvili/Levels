@@ -1,6 +1,7 @@
 // MAC-001 composition root (local-only, owner decision K): IOKitBatteryReader →
 // BatteryReporter → LocalOnlySyncService → App Group SnapshotCache, read by the UI-001 store
-// and the Widgets-Mac extension. No CloudKit container and no push registration: the free
+// and the Widgets-Mac extension. MAC-003: MacAccessoryReader → AccessoryReporter feeds the
+// same sync with the connected accessories. No CloudKit container and no push registration: the free
 // Personal Team has no iCloud or push entitlement (SETUP.md).
 import AppKit
 import Foundation
@@ -26,6 +27,8 @@ import os
     var highlighted: DeviceID?
 
     @ObservationIgnored let reporter: BatteryReporter
+    /// MAC-003: connected accessories (IOKit HID + system_profiler), parent = this Mac.
+    @ObservationIgnored let accessories: AccessoryReporter
     @ObservationIgnored let sync: any BatterySyncing
     @ObservationIgnored private let local: LocalOnlySyncService
     @ObservationIgnored private let identity: any DeviceIdentityProviding
@@ -59,17 +62,20 @@ import os
         let reporter = BatteryReporter(reader: IOKitBatteryReader(), sync: sync, kind: .mac,
                                        identity: identity, preferences: preferences,
                                        log: ReportLog(suiteName: group))
+        let accessories = AccessoryReporter(reader: MacAccessoryReader(), sync: sync,
+                                            parentID: { (try? identity.currentDeviceID()) ?? nil })
         let source = MacSnapshotSource(
             base: SnapshotCacheSource(cache: cache, preferences: preferences) { reason in
                 await reporter.report(reason: reason)
             },
-            reporter: reporter, sync: sync)
+            reporter: reporter, accessories: accessories, sync: sync)
         relay.set { source.notifyChanged() }
 
         self.local = local
         self.sync = sync
         self.identity = identity
         self.reporter = reporter
+        self.accessories = accessories
         store = DeviceListStore(source: source, preferences: preferences)
         loginItem = LoginItemController(service: MainAppLoginService())
     }
@@ -88,6 +94,8 @@ import os
         }
         tasks.append(Task { await self.store.start() })
         await reporter.start()  // MAC-002 R6a launch report, IOPS changes, 30-min heartbeat
+        await accessories.start()  // MAC-003: launch scan, HID connect/disconnect, 5/15-min poll
+        observePowerSourceForAccessories()
         observeSleepAndWake()
         // R10a (network reachable → refresh) and R11 (15-min fallback fetch) have nothing to
         // fetch without iCloud; LocalOnlySyncService.refresh is a cache re-read, so neither runs.
@@ -96,7 +104,7 @@ import os
     /// R10: sleep reports without waiting; wake reports, then refreshes.
     private func observeSleepAndWake() {
         let center = NSWorkspace.shared.notificationCenter
-        let reporter = reporter, sync = sync
+        let reporter = reporter, sync = sync, accessories = accessories
         tasks.append(Task {
             for await _ in center.notifications(named: NSWorkspace.willSleepNotification).map({ _ in () }) {
                 Self.logger.notice("Will sleep")
@@ -107,7 +115,22 @@ import os
             for await _ in center.notifications(named: NSWorkspace.didWakeNotification).map({ _ in () }) {
                 Self.logger.notice("Did wake")
                 await reporter.report(reason: .wake)
+                await accessories.report(reason: .wake)  // ADR-0015: re-scan on wake
                 await sync.refresh(.wake)
+            }
+        })
+    }
+
+    /// ADR-0015: re-scan accessories when the power source changes (charger in or out).
+    /// IOPS also fires on every 1 % step, so only power-state changes trigger a scan.
+    private func observePowerSourceForAccessories() {
+        let accessories = accessories
+        tasks.append(Task {
+            var last: BatteryReading.PowerState?
+            for await reading in IOKitBatteryReader().changes() {
+                defer { last = reading.powerState }
+                guard let last, last != reading.powerState else { continue }
+                await accessories.report(reason: .batteryChange)
             }
         })
     }
@@ -159,9 +182,10 @@ struct LoggingSync: BatterySyncing {
 
     func report(_ readings: [DeviceBattery], reason: ReportReason) async -> ReportOutcome {
         let outcome = await base.report(readings, reason: reason)
-        if let d = readings.first {
+        for d in readings {
             Self.logger.notice("""
-                Report \(reason.rawValue, privacy: .public): \(d.name, privacy: .public) \
+                Report \(reason.rawValue, privacy: .public): \(d.name, privacy: .public)\
+                \(d.accessory.map { " [\($0.kind.rawValue) \($0.component.rawValue)]" } ?? "", privacy: .public) \
                 level=\(d.level.map(String.init) ?? "none", privacy: .public) \
                 charging=\(d.isCharging) pluggedIn=\(d.isPluggedIn.map(String.init) ?? "nil", privacy: .public) \
                 lowPower=\(d.isLowPowerMode ?? false) → \(String(describing: outcome), privacy: .public)
@@ -201,11 +225,13 @@ final class CachingIdentity: DeviceIdentityProviding {
 final class MacSnapshotSource: DeviceSnapshotSource {
     let base: SnapshotCacheSource
     let reporter: BatteryReporter
+    let accessories: AccessoryReporter
     let sync: any BatterySyncing
 
-    init(base: SnapshotCacheSource, reporter: BatteryReporter, sync: any BatterySyncing) {
+    init(base: SnapshotCacheSource, reporter: BatteryReporter, accessories: AccessoryReporter, sync: any BatterySyncing) {
         self.base = base
         self.reporter = reporter
+        self.accessories = accessories
         self.sync = sync
     }
 
@@ -223,6 +249,7 @@ final class MacSnapshotSource: DeviceSnapshotSource {
 
     func removeAllData() async throws {
         await reporter.stop()
+        await accessories.stop()
         try await base.removeAllData()
         MacAppModel.logger.notice("Removed all data; reporting is off")
     }
@@ -230,6 +257,7 @@ final class MacSnapshotSource: DeviceSnapshotSource {
     func resumeReporting() async {
         await base.resumeReporting()
         await reporter.start()
+        await accessories.start()
         MacAppModel.logger.notice("Reporting resumed")
     }
 }

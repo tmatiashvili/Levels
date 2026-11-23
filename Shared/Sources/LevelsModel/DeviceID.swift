@@ -32,6 +32,13 @@ public struct DeviceID: Hashable, Codable, Sendable, CustomStringConvertible {
         DeviceID(UUID.v5(namespace: accessoryNamespace, name: "accessory:\(key):\(component.rawValue)"))
     }
 
+    /// The `accessoryGroupId` shared by every component of one accessory (MAC-003 R3a):
+    /// UUIDv5 of `"accessory-group:<key>"` in ``accessoryNamespace``. One-way, like
+    /// ``accessory(key:component:)``, so the raw key is never stored.
+    public static func accessoryGroup(key: String) -> UUID {
+        UUID.v5(namespace: accessoryNamespace, name: "accessory-group:\(key)")
+    }
+
     // Encoded as its record name, so it reads well in snapshot.json.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()

@@ -1,0 +1,9 @@
+[
+  { "Built-In" : true, "Product" : "Apple Internal Keyboard / Trackpad", "VendorID" : 0, "ProductID" : 857, "Transport" : "FIFO" },
+  { "Product" : "Magic Mouse", "BatteryPercent" : 64, "DeviceAddress" : "00-11-22-33-44-20", "VendorID" : 76, "ProductID" : 617, "Transport" : "Bluetooth" },
+  { "Product" : "Magic Keyboard", "BatteryPercent" : 91, "DeviceAddress" : "00-11-22-33-44-21", "VendorID" : 76, "ProductID" : 620, "Transport" : "Bluetooth" },
+  { "Product" : "Magic Keyboard", "BatteryPercent" : 91, "DeviceAddress" : "00-11-22-33-44-21", "VendorID" : 76, "ProductID" : 620, "Transport" : "Bluetooth" },
+  { "Product" : "Magic Trackpad", "BatteryPercent" : 12, "DeviceAddress" : "00-11-22-33-44-22", "VendorID" : 76, "ProductID" : 613, "Transport" : "Bluetooth" },
+  { "Product" : "Broken Trackpad", "BatteryPercent" : 50, "VendorID" : 76, "Transport" : "Bluetooth" },
+  { "Product" : "Weird Mouse", "BatteryPercent" : "50", "DeviceAddress" : "00-11-22-33-44-23", "Transport" : "Bluetooth" }
+]

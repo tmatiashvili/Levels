@@ -227,6 +227,23 @@ struct LocalOnlySyncServiceTests {
         #expect(cachedMac()?.updatedAt == t0)
     }
 
+    /// MAC-003: the accessory reporter sends accessories on their own. That must not change
+    /// `ownDeviceID`, and a later Mac-only report (accessory disconnected) keeps the accessory
+    /// record with its last level and `updatedAt` (R4).
+    @Test func MAC003_accessoryOnlyReportsKeepOwnIDAndDisconnectKeepsLastValue() async {
+        let s = service()
+        let t0 = clock.date
+        _ = await s.report([mac(at: t0)], reason: .launch)
+        #expect(await s.report([airpod(level: 40, at: t0)], reason: .launch) == .uploaded)
+        #expect(cache.read()?.ownDeviceID == macID)
+        advance(120)
+        _ = await s.report([mac(level: 79, at: clock.date)], reason: .batteryChange)
+        let pod = cache.read()?.devices.first { $0.kind == .accessory }
+        #expect(pod?.level == 40)
+        #expect(pod?.updatedAt == t0)
+        #expect(pod?.accessory?.parentDeviceID == macID)
+    }
+
     @Test func LOCAL_keepsOtherDevicesInTheCache() async throws {
         let phone = DeviceBattery(id: DeviceID(UUID()), name: "iPhone", kind: .iphone, level: 30, isCharging: false,
                                   updatedAt: clock.date - 600)

@@ -22,7 +22,7 @@ let package = Package(
         .target(name: "LevelsWidgetKit", dependencies: ["LevelsModel", "LevelsUI"]),
         .testTarget(name: "LevelsModelTests", dependencies: ["LevelsModel"]),
         .testTarget(name: "LevelsSyncTests", dependencies: ["LevelsSync"]),
-        .testTarget(name: "LevelsReadersTests", dependencies: ["LevelsReaders"]),
+        .testTarget(name: "LevelsReadersTests", dependencies: ["LevelsReaders"], resources: [.copy("Fixtures")]),
         .testTarget(name: "LevelsUITests", dependencies: ["LevelsUI"]),
         .testTarget(name: "LevelsWidgetKitTests", dependencies: ["LevelsWidgetKit"]),
     ],

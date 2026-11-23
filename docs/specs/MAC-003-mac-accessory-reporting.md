@@ -39,6 +39,21 @@ To be detailed when v0.3 starts:
 - a `Process` run with a 5 s timeout;
 - JSON parsing with `JSONSerialization` into typed structs, with fixture-based unit tests built from real `system_profiler` output (redacted).
 
+## Implementation notes (2026-11-23, pulled forward into the free-team build)
+
+What was built, and where it differs from the outline above:
+
+- **Data on the owner's MacBook (macOS 27.2.1), re-checked:** `ioreg -r -k BatteryPercent -l` returned nothing; `AppleDeviceManagementHIDEventService` had one entry, the built-in keyboard/trackpad (`Built-In = true`, no `BatteryPercent`, no `DeviceAddress`); `system_profiler SPBluetoothDataType -json` took about 0.1 s and listed the AirPods under `device_not_connected` with cached `device_batteryLevelLeft/Right/Case` (`"100%"`, `"100%"`, `"45%"`). No Magic peripheral or AirPods were connected, so the connected-device shapes in the fixtures are the captured file with the AirPods entry moved under `device_connected`, and hand-written HID entries with ADR-0015's key names. ADR-0015's sources stand; its **Assumptions:** are still open.
+- **Code:** `AccessoryBatteryReader` (protocol), `AccessoryReading`/`AccessoryScan`, the pure `SystemProfilerBluetoothParser` and `HIDAccessoryParser`, `BluetoothAddress`, `FixedAccessoryReader` and `AccessoryReporter` are in LevelsReaders. `MacAccessoryReader` (IOKit registry read, `IONotificationPort` match/terminate on the main queue, `system_profiler` with a 5 s timeout under `LEVELS_UNSANDBOXED`) is in Levels-Mac. Fixtures are in `Shared/Tests/LevelsReadersTests/Fixtures` (fake addresses, serials and names).
+- **Deviation, reader shape:** the Design names two `BatteryReader` conformers. `BatteryReader` returns one reading of the device's own battery, so accessories use their own protocol, `AccessoryBatteryReader`, with one Mac reader that merges both sources (IOKit first, so a peripheral listed by both keeps the 1 % level).
+- **Deviation, reporter:** a separate `AccessoryReporter` actor reports accessories through `BatterySyncing`, next to `BatteryReporter` (which stays own-battery only). Its scans: launch, HID connect/disconnect, wake, power-state change (not every 1 % IOPS step), and the poll.
+- **Poll (ADR-0014 rule 5):** one timer, re-armed after every scan: 5 minutes while any accessory battery is connected (HID or AirPods, which also covers R1) or headphones are listed as connected, otherwise 15 minutes; 60 s tolerance. Poll scans use `ReportReason.heartbeat`, so `LocalWritePolicy` writes a level change after its 60 s gap and an unchanged accessory every 30 minutes.
+- **Names:** every component record carries the plain device name ("TPods"), not "TPods — Left", so UI-001 R13's group name (shortest name) is the headset name. Components are told apart by `component`.
+- **Group ID:** `accessoryGroupId = UUIDv5(LevelsAccessoryNamespace, "accessory-group:" + accessoryKey)` (`DeviceID.accessoryGroup(key:)`); one-way like the record names.
+- **R5:** a device whose battery keys can't be trusted (unknown `device_batteryLevel*` key, a value that is not `NN%`, a missing or malformed address, a non-integer `BatteryPercent`) is dropped whole; each distinct problem is logged once per run, with no address in the text.
+- **R6:** lead's call 16 turns the sandbox off for Debug and Release (ADR-0013 note), so `LEVELS_UNSANDBOXED` is set in both.
+- **Charging:** neither source exposes it; accessory records have `isCharging = false` and no `isPluggedIn`.
+
 ## Edge cases and failure modes
 
 - Both buds in the case: levels may update only when the case is opened.
