@@ -122,6 +122,7 @@ struct LevelsMacApp: App {
 
 - The Hardened Runtime is on, with no exceptions.
 - A Developer ID provisioning profile with iCloud, Push and App Groups is embedded. At v0.3 MAC-003 sets `com.apple.security.app-sandbox = false` for the Developer ID configuration only.
+- Lead's call 16 (2026-11-23): with MAC-003 pulled forward into the free-team build, the sandbox key is removed from the entitlements file and `ENABLE_APP_SANDBOX = NO` for Debug and Release (ADR-0013 note).
 
 **Build and notarize (owner's machine)**
 

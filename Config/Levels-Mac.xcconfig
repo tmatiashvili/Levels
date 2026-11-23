@@ -15,17 +15,21 @@ INFOPLIST_FILE = Levels-Mac/Info.plist
 // `development`; exporting for Developer ID rewrites it to `production`.
 CODE_SIGN_ENTITLEMENTS = Levels-Mac/Levels-Mac.entitlements
 
-// ADR-0013 / MAC-001: Hardened Runtime on, no exceptions; sandbox on for
-// v0.1–v0.2. The sandbox and network-client entitlements are written in the
-// entitlements files; these settings agree with them so Xcode adds nothing.
+// ADR-0013 / MAC-001: Hardened Runtime on, no exceptions.
+// App Sandbox OFF in Debug and Release (lead's call 16, 2026-11-23): MAC-003
+// accessories are pulled forward, the AirPods source (system_profiler) returns
+// nothing inside the sandbox (re-tested 2026-11-23), and the build is
+// personal-only on a free Personal Team. The entitlements file has no sandbox
+// key, so this setting agrees with it. LEVELS_UNSANDBOXED compiles the
+// system_profiler reader (ADR-0013, MAC-003 R6); a future sandboxed App Store
+// configuration drops the flag and keeps the IOKit HID reader.
 // Leave ENABLE_USER_SELECTED_FILES empty: any value adds a files.* entitlement
 // that MAC-001 AC11 does not allow.
 ENABLE_HARDENED_RUNTIME = YES
-ENABLE_APP_SANDBOX = YES
+ENABLE_APP_SANDBOX = NO
 ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES
 ENABLE_USER_SELECTED_FILES =
-// v0.3 (MAC-003, ADR-0013): add ENABLE_APP_SANDBOX[config=Release] = NO for the
-// Developer ID build only, and make the entitlements file match.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) LEVELS_UNSANDBOXED
 
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
