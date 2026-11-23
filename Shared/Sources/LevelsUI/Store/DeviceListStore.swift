@@ -7,7 +7,27 @@ import Observation
     public enum State: Equatable, Sendable {
         case loading, empty, onlyThisDevice, loaded, noICloud
         case syncError(String)
+        /// Hub mode (NET-004 R1, R11): no Mac pairing; the app shows "Connect to your Mac".
+        case notPaired
+        /// Hub mode: rows plus a hub banner (NET-004 R4).
+        case hub(HubBanner)
     }
+
+    /// The hub banners of NET-004 R4.
+    public enum HubBanner: Equatable, Sendable {
+        /// "Away from your Mac. Last update <age>."
+        case away(lastContactAt: Date?)
+        /// Local Network permission is off (`.restricted` in hub mode).
+        case localNetworkOff
+        /// The Mac refused this iPhone's key (`.misconfigured(401)`).
+        case forgotThisPhone
+        /// Protocol versions differ (`.misconfigured(426)`).
+        case updateNeeded
+    }
+
+    /// True in the iPhone's hub build (ADR-0020): statuses map per NET-004 R11, and old
+    /// devices are removed on the Mac only (R8).
+    public let isHubMode: Bool
 
     public private(set) var rows: [DeviceRowModel] = []
     /// Devices with no reading for 30 days (R14), same order as `rows`.
@@ -39,7 +59,9 @@ import Observation
     public init(source: some DeviceSnapshotSource,
                 preferences: some DisplayPreferencesStore,
                 now: @escaping @Sendable () -> Date = { Date() },
-                refreshTimeout: Duration = .seconds(15)) {
+                refreshTimeout: Duration = .seconds(15),
+                isHubMode: Bool = false) {
+        self.isHubMode = isHubMode
         self.source = source
         preferencesStore = preferences
         self.preferences = preferences.load()
@@ -174,12 +196,15 @@ import Observation
         rows = built.rows
         oldRows = built.oldRows
         hiddenRows = built.hiddenRows
-        state = Self.state(snapshot: snapshot, rows: rows, error: loadError ?? refreshError, dismissed: dismissedError)
+        state = Self.state(snapshot: snapshot, rows: rows, error: loadError ?? refreshError, dismissed: dismissedError,
+                           isHubMode: isHubMode)
     }
 
     /// `.signedOut` / `.restricted` → `.noICloud`; a read, refresh or fetch error → `.syncError`
     /// (unless dismissed); else by rows. `.loading` only before the first successful read.
-    static func state(snapshot: SnapshotFile?, rows: [DeviceRowModel], error: String?, dismissed: String?) -> State {
+    static func state(snapshot: SnapshotFile?, rows: [DeviceRowModel], error: String?, dismissed: String?,
+                      isHubMode: Bool = false) -> State {
+        if isHubMode, let hub = hubState(snapshot?.syncStatus) { return hub }
         if let status = snapshot?.syncStatus, status == .signedOut || status == .restricted { return .noICloud }
         if let message = error ?? snapshot.flatMap(cachedError), message != dismissed { return .syncError(message) }
         if snapshot == nil { return error == nil ? .loading : .empty }
@@ -188,10 +213,24 @@ import Observation
         return .loaded
     }
 
+    /// NET-004 R11: hub statuses → `.notPaired` or a hub banner; `nil` for the others.
+    /// iCloud states never show in hub mode.
+    static func hubState(_ status: SyncStatus?) -> State? {
+        switch status {
+        case .notPaired?: .notPaired
+        case .awayFromHub(let at)?: .hub(.away(lastContactAt: at))
+        case .restricted?: .hub(.localNetworkOff)
+        case .misconfigured(401)?: .hub(.forgotThisPhone)
+        case .misconfigured(426)?: .hub(.updateNeeded)
+        default: nil
+        }
+    }
+
     /// An error the cache records: sync offline, misconfigured, iCloud full, or a failed fetch.
     static func cachedError(_ file: SnapshotFile) -> String? {
         switch file.syncStatus {
         case .offline?: return "Offline"
+        case .notPaired?, .awayFromHub?: break  // hub states (NET-004 R11), not errors
         case .misconfigured(let code)?: return "Misconfigured (\(code))"
         case .iCloudFull?: return "iCloud full"
         default: break

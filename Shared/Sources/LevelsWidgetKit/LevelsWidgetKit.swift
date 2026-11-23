@@ -46,7 +46,20 @@ public struct DeviceEntry: TimelineEntry, Sendable {
     public var isOnlyThisDevice: Bool { rows.count == 1 && rows[0].isThisDevice }
 
     public var isICloudOff: Bool {
+        #if os(iOS)
+        false  // the iPhone build is hub mode: `.restricted` means Local Network off (NET-004 R12)
+        #else
         snapshot?.syncStatus == .signedOut || snapshot?.syncStatus == .restricted
+        #endif
+    }
+
+    /// NET-004 R12: no Mac pairing ("Open Levels to connect your Mac").
+    public var isNotPaired: Bool { snapshot?.syncStatus == .notPaired }
+
+    /// NET-004 R13: the last good contact when the cache says away; `nil` otherwise.
+    public var awayFooterDate: Date?? {
+        if case .awayFromHub(let at)? = snapshot?.syncStatus { return .some(at ?? snapshot?.lastFetchAt) }
+        return nil
     }
 }
 
@@ -95,9 +108,52 @@ public enum DevicesTimeline {
     }
 }
 
+/// NET-004 R14 variant B (lead's call 29: A + B): when the cache is older than 15 minutes
+/// the widget fetches from the Mac itself. Pure planning, unit-tested with a fake fetch.
+public enum HubWidgetPlan {
+    /// The cache counts as fresh this long after `lastFetchAt`.
+    public static let freshFor: TimeInterval = 15 * 60
+    /// Reload after a good fetch (or a fresh cache).
+    public static let afterSuccess: TimeInterval = 15 * 60
+    /// Reload after a failed fetch.
+    public static let afterFailure: TimeInterval = 60 * 60
+
+    /// A fetch from the Mac: given the cached file, returns the merged file (already written
+    /// to the cache when the App Group exists), or `nil` on any failure. Must end within 4 s.
+    public typealias Fetch = @Sendable (SnapshotFile?) async -> SnapshotFile?
+
+    public enum Outcome: Equatable, Sendable { case variantA, cacheFresh, fetched, failed }
+
+    /// Picks the snapshot to show and the next reload date. `nil` reload = variant A's policy.
+    public static func resolve(cached: SnapshotFile?, now: Date, fetch: Fetch?) async
+        -> (snapshot: SnapshotFile?, reloadAt: Date?, outcome: Outcome) {
+        guard let fetch, let cached, cached.syncStatus != .notPaired else { return (cached, nil, .variantA) }
+        if let last = cached.lastFetchAt, now.timeIntervalSince(last) < freshFor, now >= last {
+            return (cached, last.addingTimeInterval(afterSuccess), .cacheFresh)
+        }
+        if let fetched = await fetch(cached) {
+            return (fetched, now.addingTimeInterval(afterSuccess), .fetched)
+        }
+        var away = cached
+        if case .awayFromHub = cached.syncStatus {} else {
+            away.syncStatus = .awayFromHub(lastContactAt: cached.lastFetchAt)
+        }
+        return (away, now.addingTimeInterval(afterFailure), .failed)
+    }
+}
+
 /// Reads the cache synchronously from the App Group named in the extension's Info.plist.
+/// With a `fetch` (iPhone variant B) it may also ask the Mac when the cache is old.
 public struct DevicesProvider: AppIntentTimelineProvider {
-    public init() {}
+    let fetch: HubWidgetPlan.Fetch?
+
+    public init(fetch: HubWidgetPlan.Fetch? = nil) { self.fetch = fetch }
+
+    static func cached() -> (SnapshotFile?, DisplayPreferences) {
+        let group = LevelsAppConfig.appGroupID
+        let snapshot = group.flatMap(SnapshotCache.init(appGroupID:))?.read()
+        return (snapshot, UserDefaultsDisplayPreferencesStore(suiteName: group).load())
+    }
 
     static func load(now: Date, selection: DeviceID? = nil) -> [DeviceEntry] {
         let group = LevelsAppConfig.appGroupID
@@ -114,8 +170,21 @@ public struct DevicesProvider: AppIntentTimelineProvider {
 
     public func timeline(for configuration: SelectDeviceIntent, in context: Context) async -> Timeline<DeviceEntry> {
         let now = Date()
-        let entries = Self.load(now: now, selection: configuration.device?.deviceID)
-        return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
+        let selection = configuration.device?.deviceID
+        guard let fetch else {
+            let entries = Self.load(now: now, selection: selection)
+            return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
+        }
+        let (cached, prefs) = Self.cached()
+        let plan = await HubWidgetPlan.resolve(cached: cached, now: now, fetch: fetch)
+        var entries = DevicesTimeline.entries(snapshot: plan.snapshot, preferences: prefs, now: now, selection: selection)
+        guard let reloadAt = plan.reloadAt else {
+            return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
+        }
+        entries = entries.filter { $0.date < reloadAt }  // ADR-0017 stale entries before the reload
+        return Timeline(entries: entries.isEmpty ? [DeviceEntry(date: now, snapshot: plan.snapshot, preferences: prefs,
+                                                                selection: selection)] : entries,
+                        policy: .after(reloadAt))
     }
 
     /// Gallery and placeholder data, never the cache (UI-003 Design).
@@ -190,10 +259,12 @@ struct EmptyWidgetView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            Image(systemName: entry.isICloudOff ? "icloud.slash" : MenuBarLabelModel.appSymbol)
+            Image(systemName: entry.isICloudOff ? "icloud.slash" : entry.isNotPaired ? "macbook.and.iphone" : MenuBarLabelModel.appSymbol)
                 .font(.title2)
                 .widgetAccentable()
-            Text(entry.isICloudOff ? String(localized: "iCloud off") : String(localized: "Open Levels to start"))
+            Text(entry.isICloudOff ? String(localized: "iCloud off")
+                 : entry.isNotPaired ? String(localized: "Open Levels to connect your Mac")
+                 : String(localized: "Open Levels to start"))
                 .font(.caption)
                 .multilineTextAlignment(.center)
         }
@@ -255,7 +326,27 @@ struct MediumDevicesView: View {
                 }
             }
             AgeLine(date: oldest, stale: shown.contains { $0.freshness(at: entry.date) == .stale })
+            if let away = entry.awayFooterDate { AwayFooter(lastContact: away) }
         }
+    }
+}
+
+/// NET-004 R13: "Away from Mac · <age of lastFetchAt>", self-updating. Medium and large only.
+struct AwayFooter: View {
+    let lastContact: Date?
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "wifi.slash")
+            if let lastContact {
+                Text("Away from Mac · \(Text(.currentDate, format: .reference(to: lastContact, allowedFields: [.minute, .hour, .day])))")
+            } else {
+                Text("Away from Mac")
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
     }
 }
 
@@ -292,11 +383,18 @@ public struct LargeDevicesView: View {
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding(.top, 4)
             } else if entry.isOnlyThisDevice {
+                #if os(iOS)
+                Text(String(localized: "Your Mac appears when it connects"))  // NET-004 R12
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .padding(.top, 6)
+                #else
                 Text(String(localized: "Other devices appear when they run Levels"))
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding(.top, 6)
+                #endif
             }
             Spacer(minLength: 0)
+            if let away = entry.awayFooterDate { AwayFooter(lastContact: away) }
         }
         .widgetURL(LevelsAppConfig.listURL)  // taps outside a row open the list
     }

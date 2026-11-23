@@ -161,3 +161,48 @@ struct LevelsWidgetKitTests {
         #expect(LevelsAppConfig.deviceURL(id(2)).absoluteString == "levels://device/00000000-0000-0000-0000-000000000002")
     }
 }
+
+/// NET-004 R12–R14 (AC6–AC8): variant B planning and the hub widget states.
+@Suite("NET-004 widget variant B")
+struct HubWidgetPlanTests {
+    let mac = d(2, .mac, "Mac", 80)
+    let phone = d(1, .iphone, "iPhone", 50)
+
+    func cached(lastFetch: Date?, status: SyncStatus = .localOnly) -> SnapshotFile {
+        SnapshotFile(ownDeviceID: id(1), syncStatus: status, lastFetchAt: lastFetch, devices: [phone])
+    }
+
+    @Test func AC8_goodFetchUsesItAndReloadsIn15Minutes() async {
+        let fetched = SnapshotFile(ownDeviceID: id(1), syncStatus: .localOnly, lastFetchAt: now, devices: [phone, mac])
+        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in fetched }
+        #expect(plan.outcome == .fetched && plan.snapshot == fetched)
+        #expect(plan.reloadAt == now + 15 * 60)
+    }
+
+    @Test func AC8_failedFetchUsesCacheMarkedAwayAndReloadsIn60Minutes() async {
+        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in nil }
+        #expect(plan.outcome == .failed)
+        #expect(plan.snapshot?.syncStatus == .awayFromHub(lastContactAt: now - 3600))
+        #expect(plan.reloadAt == now + 60 * 60)
+    }
+
+    @Test func freshCacheDoesNotFetch() async {
+        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 60), now: now) { _ in
+            Issue.record("fetched"); return nil
+        }
+        #expect(plan.outcome == .cacheFresh && plan.reloadAt == now - 60 + 15 * 60)
+    }
+
+    @Test func notPairedOrNoFetchIsVariantA() async {
+        #expect(await HubWidgetPlan.resolve(cached: cached(lastFetch: nil, status: .notPaired), now: now) { _ in nil }.outcome == .variantA)
+        #expect(await HubWidgetPlan.resolve(cached: cached(lastFetch: nil), now: now, fetch: nil).outcome == .variantA)
+    }
+
+    @Test func AC6_AC7_entryFlags() {
+        let away = DeviceEntry(date: now, snapshot: cached(lastFetch: now - 7200, status: .awayFromHub(lastContactAt: now - 7200)),
+                               preferences: DisplayPreferences())
+        #expect(away.awayFooterDate == .some(now - 7200))
+        let notPaired = DeviceEntry(date: now, snapshot: cached(lastFetch: nil, status: .notPaired), preferences: DisplayPreferences())
+        #expect(notPaired.isNotPaired && notPaired.awayFooterDate == nil)
+    }
+}

@@ -29,6 +29,12 @@ public actor LocalOnlySyncService: BatterySyncing {
     private let policy: LocalWritePolicy
     private let reporting: ReportingSetting
     private let widgetReloader: @Sendable () -> Void
+    /// NET-003 Design: called after each successful write that holds this device's own
+    /// reading (direct or held flush); the hub client's outbox listens.
+    private let onOwnWrite: @Sendable (DeviceBattery) -> Void
+    /// What writes stamp into `SnapshotFile.syncStatus`. `.localOnly` unless a wrapping
+    /// service (``LocalNetworkSyncService``) sets another with ``setStatus(_:lastFetchAt:)``.
+    private var currentStatus: SyncStatus = .localOnly
     private let now: @Sendable () -> Date
     /// Returns a sleep that ends `duration` after *now* (the deadline is fixed when this is
     /// called, not when the returned closure starts running).
@@ -65,9 +71,11 @@ public actor LocalOnlySyncService: BatterySyncing {
         policy: LocalWritePolicy = LocalWritePolicy(),
         reporting: ReportingSetting = .inMemory(),
         widgetReloader: @escaping @Sendable () -> Void,
+        onOwnWrite: @escaping @Sendable (DeviceBattery) -> Void = { _ in },
         now: @escaping @Sendable () -> Date = Date.init,
         clock: C = ContinuousClock()
     ) {
+        self.onOwnWrite = onOwnWrite
         self.cache = cache
         self.policy = policy
         self.reporting = reporting
@@ -81,8 +89,34 @@ public actor LocalOnlySyncService: BatterySyncing {
 
     // MARK: BatterySyncing
 
-    /// Always ``SyncStatus/localOnly``: there is no account or network state to report.
-    public var status: SyncStatus { .localOnly }
+    /// ``SyncStatus/localOnly`` on its own; a wrapping hub service may set another.
+    public var status: SyncStatus { currentStatus }
+
+    /// Hub mode (NET-003 R3, R9): records a status (and, when given, the last good contact
+    /// with the Mac) in the cache so the UI and widgets read it. Later writes keep it. A
+    /// status change requests a widget reload (the away footer, NET-004 R13). Nothing is
+    /// written while reporting is off. Runs under the serial gate.
+    public func setStatus(_ status: SyncStatus, lastFetchAt: Date? = nil) async {
+        await acquire()
+        defer { release() }
+        let changed = status != currentStatus
+        currentStatus = status
+        guard reporting.isEnabled else { return }
+        let cache = cache
+        do {
+            let fileChanged = try await Task.detached(priority: .utility) {
+                try cache.update { (file: inout SnapshotFile) -> Bool in
+                    let before = (file.syncStatus, file.lastFetchAt)
+                    file.syncStatus = status
+                    if let lastFetchAt { file.lastFetchAt = lastFetchAt }
+                    return before.0 != file.syncStatus || before.1 != file.lastFetchAt
+                }
+            }.value
+            if changed && fileChanged { requestWidgetReload() }
+        } catch {
+            Self.logger.error("Cache status update failed: \(String(describing: error), privacy: .public)")
+        }
+    }
 
     /// Writes each reading into the cache per ``LocalWritePolicy``, judged per record.
     /// The first non-accessory reading is this device (`ownDeviceID`).
@@ -140,9 +174,10 @@ public actor LocalOnlySyncService: BatterySyncing {
     public func start() async {
         guard reporting.isEnabled else { return }
         let cache = cache
+        let status = currentStatus
         do {
             try await Task.detached(priority: .utility) {
-                try cache.update { $0.syncStatus = .localOnly }
+                try cache.update { $0.syncStatus = status }
             }.value
         } catch {
             Self.logger.error("Cache update failed: \(String(describing: error), privacy: .public)")
@@ -251,7 +286,9 @@ public actor LocalOnlySyncService: BatterySyncing {
     private func write(_ slots: [Pending]) async -> Bool {
         let cache = cache
         let values = slots.map(\.value)
-        let ownID = slots.first(where: \.isOwn)?.value.id
+        let own = slots.first(where: \.isOwn)?.value
+        let ownID = own?.id
+        let status = currentStatus
         do {
             let (before, after) = try await Task.detached(priority: .utility) {
                 try cache.update { file in
@@ -265,12 +302,13 @@ public actor LocalOnlySyncService: BatterySyncing {
                     }
                     file.devices = SnapshotFile.sorted(file.devices)
                     if let ownID { file.ownDeviceID = ownID }
-                    file.syncStatus = .localOnly
+                    file.syncStatus = status
                     return (before, file.devices)
                 }
             }.value
             let t = now()
             for value in values { written[value.id] = Written(value: value, at: t) }
+            if let own { onOwnWrite(own) }
             cachedDevices = after
             if Self.needsWidgetReload(before: before, after: after, received: widgetDevices, now: t) {
                 requestWidgetReload()

@@ -11,6 +11,11 @@ public enum SyncStatus: Sendable, Equatable, Codable {
     case localOnly
     case misconfigured(code: Int)
     case offline(lastFetchAt: Date?)
+    /// Hub mode (ADR-0020, lead's call 24): no Mac pairing is stored on this iPhone.
+    case notPaired
+    /// Hub mode: the paired Mac was not found or not ready in time. `lastContactAt` is the
+    /// last good contact (`SnapshotFile.lastFetchAt`). The UI shows "Away from your Mac".
+    case awayFromHub(lastContactAt: Date?)
 }
 
 /// Why a device reports its battery.

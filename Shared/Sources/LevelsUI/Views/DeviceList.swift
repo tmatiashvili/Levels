@@ -9,6 +9,7 @@ public struct DeviceList: View {
     let showsOldDevices: Bool
     let onSelect: ((DeviceRowModel) -> Void)?
     let highlighted: DeviceID?
+    let onPairAgain: () -> Void
 
     @State private var renaming = false
     @State private var newName = ""
@@ -18,7 +19,9 @@ public struct DeviceList: View {
     ///   - onSelect: tap action (iPhone pushes the detail); `nil` = rows aren't tappable.
     ///   - highlighted: a row to scroll into view and highlight (Mac device window, UI-004 R14).
     public init(store: DeviceListStore, showsOldDevices: Bool = true, highlighted: DeviceID? = nil,
+                onPairAgain: @escaping () -> Void = {},
                 onSelect: ((DeviceRowModel) -> Void)? = nil) {
+        self.onPairAgain = onPairAgain
         self.store = store
         self.showsOldDevices = showsOldDevices
         self.highlighted = highlighted
@@ -33,7 +36,8 @@ public struct DeviceList: View {
                     Section {
                         SyncStatusBanner(state: store.state, isReportingOff: store.isReportingOff,
                                          onDismiss: { store.dismissSyncError() },
-                                         onResumeReporting: { Task { await store.resumeReporting() } })
+                                         onResumeReporting: { Task { await store.resumeReporting() } },
+                                         onPairAgain: onPairAgain)
                     }
                 }
                 Section {
@@ -117,6 +121,11 @@ public struct OldDevicesSection: View {
     public var body: some View {
         Section {
             DisclosureGroup(isExpanded: $isExpanded) {
+                if store.isHubMode {  // NET-004 R8: the Mac's full snapshot would add them back
+                    ForEach(store.oldRows) { row in DeviceRow(row: row, now: now) }
+                    Text("Remove old devices on your Mac.", bundle: .module)
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else {
                 ForEach(store.oldRows) { row in
                     HStack {
                         DeviceRow(row: row, now: now)
@@ -128,6 +137,7 @@ public struct OldDevicesSection: View {
                         Button(role: .destructive) { pendingRemoval = row } label: { Text("Remove", bundle: .module) }
                     }
                     #endif
+                }
                 }
             } label: {
                 Text("Old devices", bundle: .module)
