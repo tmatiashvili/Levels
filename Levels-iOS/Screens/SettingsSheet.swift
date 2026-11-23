@@ -1,6 +1,6 @@
-// UI-002 R8, R12 with the NET-004 R7 "Mac" section in its not-paired form. Pairing and the hub
-// client arrive with NET-002/NET-003; until then the section explains and the row is disabled.
+// UI-002 R8, R12 in hub mode: the NET-004 R7 "Mac" section, R9 Remove all my data, R10 About.
 import LevelsModel
+import LevelsNet
 import LevelsUI
 import SwiftUI
 
@@ -31,7 +31,7 @@ struct SettingsSheet: View {
                     .disabled(store.thisDeviceID == nil)
                 }
 
-                MacSection()
+                MacSettingsSection()
 
                 Section {
                     NavigationLink {
@@ -77,7 +77,7 @@ struct SettingsSheet: View {
                 } header: {
                     Text("About")
                 } footer: {
-                    Text("Data stays on this iPhone. No analytics.")  // UI-002 R8, local-only build
+                    Text("Data stays on your devices and your home network. No analytics.")  // NET-004 R10
                 }
             }
             .navigationTitle("Settings")
@@ -100,6 +100,9 @@ struct SettingsSheet: View {
                         do {
                             try await store.removeAllData()
                             dismiss()
+                        } catch is HubError {
+                            // NET-004 R9: the Mac must be reachable; nothing was deleted.
+                            removeError = String(localized: "Connect to the same Wi-Fi as your Mac to remove data there.")
                         } catch {
                             removeError = error.localizedDescription
                         }
@@ -107,8 +110,11 @@ struct SettingsSheet: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                // UI-002 R12, local-only form: nothing is stored anywhere else yet.
-                Text("This deletes the battery levels stored on this iPhone and stops reporting. You can turn reporting back on from the list.")
+                if model.pairedMac != nil {  // NET-004 R9
+                    Text("This deletes the levels stored on this iPhone and this iPhone's battery on your Mac. Your Mac keeps its own levels.")
+                } else {
+                    Text("This deletes the battery levels stored on this iPhone and stops reporting. You can turn reporting back on from the list.")
+                }
             }
             .alert("Couldn't remove your data", isPresented: Binding(get: { removeError != nil },
                                                                    set: { if !$0 { removeError = nil } })) {
@@ -138,26 +144,6 @@ struct SettingsSheet: View {
         let short = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
         return "\(short) (\(build))"
-    }
-}
-
-/// NET-004 R7 "Settings ▸ Mac", not-paired form. The Connect flow (R1–R3) arrives with the hub
-/// client; the row stays disabled until then.
-struct MacSection: View {
-    var body: some View {
-        Section {
-            LabeledContent {
-                Text("Coming soon")
-            } label: {
-                Label("Connect to your Mac", systemImage: "macbook.and.iphone")
-            }
-            .foregroundStyle(.secondary)
-            .accessibilityElement(children: .combine)
-        } header: {
-            Text("Mac")
-        } footer: {
-            Text("Levels shows your Mac's battery and accessories when your iPhone is on the same Wi-Fi. Connecting to your Mac comes in the next update.")
-        }
     }
 }
 

@@ -28,7 +28,7 @@
 		<string>_levels._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Levels finds your Mac on your Wi-Fi to show its battery and its accessories.</string>
+	<string>Levels connects to your Mac on this Wi-Fi to show its battery and your accessories, and to send this iPhone's battery to the Mac.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

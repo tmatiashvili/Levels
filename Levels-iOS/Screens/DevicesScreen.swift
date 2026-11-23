@@ -12,10 +12,14 @@ struct DevicesScreen: View {
     var body: some View {
         @Bindable var model = model
         NavigationStack(path: $model.path) {
-            DeviceList(store: store) { row in model.path.append(row.id) }
+            DeviceList(store: store, onPairAgain: { model.showsConnect = true }) { row in model.path.append(row.id) }
                 .refreshable { await store.refresh() }  // R2: `.userRefresh`, spinner ends within 15 s
                 .safeAreaInset(edge: .top) {
-                    if model.showsShortcutsHint() {  // RPT-002 R8
+                    if store.state == .notPaired {  // NET-004 R1
+                        ConnectMacCard { model.showsConnect = true }
+                            .padding(.horizontal)
+                            .padding(.bottom, 8)
+                    } else if model.showsShortcutsHint() {  // RPT-002 R8
                         ShortcutsHintCard(onShowGuide: { showsGuide = true },
                                           onDismiss: { withAnimation { model.hintDismissed = true } })
                             .padding(.horizontal)
@@ -36,6 +40,9 @@ struct DevicesScreen: View {
         }
         .sheet(isPresented: $model.showsSettings) {
             SettingsSheet()
+        }
+        .sheet(isPresented: $model.showsConnect) {  // NET-004 R2, R3
+            ConnectMacFlowView(flow: model.makeConnectFlow())
         }
         .sheet(isPresented: $showsGuide) {
             NavigationStack { ShortcutsGuideView(showsDone: true) }

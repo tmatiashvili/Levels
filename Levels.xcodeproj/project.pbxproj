@@ -27,6 +27,8 @@
 		4C0000000000000000001111 /* LevelsModel in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001211 /* LevelsModel */; };
 		4C0000000000000000001114 /* LevelsUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001214 /* LevelsUI */; };
 		4C0000000000000000001115 /* LevelsWidgetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001215 /* LevelsWidgetKit */; };
+		4E4554000000000000001106 /* LevelsNet in Frameworks */ = {isa = PBXBuildFile; productRef = 4E4554000000000000001206 /* LevelsNet */; };
+		4E4554000000000000001116 /* LevelsNet in Frameworks */ = {isa = PBXBuildFile; productRef = 4E4554000000000000001216 /* LevelsNet */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -200,6 +202,7 @@
 				4C0000000000000000001103 /* LevelsReaders in Frameworks */,
 				4C0000000000000000001104 /* LevelsUI in Frameworks */,
 				4C0000000000000000001105 /* LevelsWidgetKit in Frameworks */,
+				4E4554000000000000001106 /* LevelsNet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -210,6 +213,7 @@
 				4C0000000000000000001111 /* LevelsModel in Frameworks */,
 				4C0000000000000000001114 /* LevelsUI in Frameworks */,
 				4C0000000000000000001115 /* LevelsWidgetKit in Frameworks */,
+				4E4554000000000000001116 /* LevelsNet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -354,6 +358,7 @@
 				4C0000000000000000001203 /* LevelsReaders */,
 				4C0000000000000000001204 /* LevelsUI */,
 				4C0000000000000000001205 /* LevelsWidgetKit */,
+				4E4554000000000000001206 /* LevelsNet */,
 			);
 			productName = "Levels-iOS";
 			productReference = 4C0000000000000000001301 /* Levels.app */;
@@ -379,6 +384,7 @@
 				4C0000000000000000001211 /* LevelsModel */,
 				4C0000000000000000001214 /* LevelsUI */,
 				4C0000000000000000001215 /* LevelsWidgetKit */,
+				4E4554000000000000001216 /* LevelsNet */,
 			);
 			productName = "Widgets-iOS";
 			productReference = 4C0000000000000000001302 /* LevelsWidgets.appex */;
@@ -823,6 +829,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
 			productName = LevelsWidgetKit;
+		};
+		4E4554000000000000001206 /* LevelsNet */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsNet;
+		};
+		4E4554000000000000001216 /* LevelsNet */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsNet;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
