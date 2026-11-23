@@ -1,0 +1,19 @@
+// Widgets-iOS: iOS/iPadOS widget extension, embedded in Levels-iOS (UI-003).
+// Links LevelsModel, LevelsUI, LevelsWidgetKit only (ADR-0003 §3).
+#include "Levels.xcconfig"
+
+SDKROOT = iphoneos
+SUPPORTED_PLATFORMS = iphoneos iphonesimulator
+TARGETED_DEVICE_FAMILY = 1,2
+
+PRODUCT_NAME = LevelsWidgets
+PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels.widgets
+INFOPLIST_FILE = Widgets-iOS/Info.plist
+INFOPLIST_KEY_CFBundleDisplayName = Levels Widgets
+
+// No push or iCloud here, so Debug and Release share one file.
+CODE_SIGN_ENTITLEMENTS = Widgets-iOS/Widgets-iOS.entitlements
+
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks @executable_path/../../Frameworks
+SKIP_INSTALL = YES
+APPLICATION_EXTENSION_API_ONLY = YES

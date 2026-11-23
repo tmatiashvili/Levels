@@ -116,7 +116,7 @@ struct LevelsMacApp: App {
 | `com.apple.developer.icloud-services` | `[CloudKit]` | SYNC-001 |
 | `com.apple.developer.icloud-container-identifiers` | `[iCloud.<rdns>.levels]` (name owned by SYNC-001) | SYNC-001 |
 | `com.apple.developer.icloud-container-environment` | `Production` in Debug and Release (set in the entitlements file, not by export) | Owner decision (2026-11-23): every daily build, debug included, uses Production (ADR-0005 rule 5) |
-| `com.apple.developer.aps-environment` | Debug: `development`; Release / Developer ID: `production` (owner decision 2026-11-23; a development profile only allows `development`) | silent push. Whether a Debug build gets pushes from the Production container is checked by [SPIKE-001](SPIKE-001-debug-build-push-check.md) |
+| `com.apple.developer.aps-environment` | Entitlements file (Debug and Release): `development`; the exported Developer ID build carries `production`, set by export (owner decision I; lead's call 14: a development profile only allows `development`) | silent push. Whether a Debug build gets pushes from the Production container is checked by [SPIKE-001](SPIKE-001-debug-build-push-check.md) |
 | `com.apple.security.application-groups` | `[<TEAMID>.<rdns>.levels]` (ADR-0003, ADR-0009; the Mac widget uses the same ID) | snapshot shared with Widgets-Mac |
 | `com.apple.security.network.client` | `true` | **Assumption:** CloudKit traffic goes through `cloudd`, so this may not be needed. Kept because it is harmless and covers anything Shared does directly. |
 
