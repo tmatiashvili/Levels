@@ -8,17 +8,29 @@ import LevelsModel
 /// its `BatterySyncing`); the app calls ``notifyChanged()`` after any other cache write.
 public final class SnapshotCacheSource: DeviceSnapshotSource {
     public typealias Report = @Sendable (ReportReason) async -> Void
+    public typealias RemoveAllData = @Sendable () async throws -> Void
 
     private let cache: SnapshotCache
     private let preferences: any DisplayPreferencesStore
+    private let reporting: ReportingSetting
+    private let removeAll: RemoveAllData
     private let report: Report
     private let broadcaster = ChangeBroadcaster()
 
-    public init(cache: SnapshotCache, preferences: some DisplayPreferencesStore, report: @escaping Report) {
+    /// - Parameters:
+    ///   - reporting: SYNC-001 R15a; read for ``isReportingEnabled``, turned on by ``resumeReporting()``.
+    ///   - removeAllData: the sync side of R15a (`LocalOnlySyncService.removeAllData()`): resets
+    ///     the cache, reloads widgets and turns `reporting` off.
+    public init(cache: SnapshotCache, preferences: some DisplayPreferencesStore, reporting: ReportingSetting,
+                removeAllData: @escaping RemoveAllData, report: @escaping Report) {
         self.cache = cache
         self.preferences = preferences
+        self.reporting = reporting
+        self.removeAll = removeAllData
         self.report = report
     }
+
+    public var isReportingEnabled: Bool { reporting.isEnabled }
 
     /// Signals ``changes()``; call after the cache was written outside this source.
     public func notifyChanged() { broadcaster.send() }
@@ -50,13 +62,13 @@ public final class SnapshotCacheSource: DeviceSnapshotSource {
     }
 
     public func removeAllData() async throws {
-        let cache = self.cache
-        try await Task.detached { try cache.reset() }.value
+        try await removeAll()
         notifyChanged()
     }
 
+    /// Turns reporting back on; the app restarts its reporter, which reports `.launch`.
     public func resumeReporting() async {
-        await report(.launch)
+        reporting.setEnabled(true)
         notifyChanged()
     }
 }

@@ -33,4 +33,5 @@ public final class InMemorySnapshotSource: DeviceSnapshotSource {
 
     public func removeAllData() async throws { update { $0.devices.removeAll() } }
     public func resumeReporting() async {}
+    public var isReportingEnabled: Bool { true }
 }

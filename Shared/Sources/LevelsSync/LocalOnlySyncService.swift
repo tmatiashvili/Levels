@@ -14,15 +14,20 @@ import os
 ///
 /// What it does not do: upload, fetch, bootstrap, account handling, `lastWritten`
 /// (that field means "accepted by the server", so it stays empty for SYNC-001 to fill),
-/// remove (SYNC-001 R15/R15a). ``ReportOutcome/uploaded`` means "written to the cache".
+/// single-record remove (SYNC-001 R15). ``ReportOutcome/uploaded`` means "written to the cache".
+/// ``removeAllData()`` is the local half of SYNC-001 R15a.
 public actor LocalOnlySyncService: BatterySyncing {
     /// SYNC-001 R8a: at most one widget reload per 60 s.
     public static let widgetReloadInterval: TimeInterval = 60
+    /// SYNC-001 R8a (lead's call 17): a write that changes only `updatedAt` reloads widgets
+    /// when the stale moment the widget last received is less than this far away.
+    public static let staleReloadLead: TimeInterval = 35 * 60
 
     private static let logger = Logger(subsystem: LevelsLog.subsystem, category: LevelsLog.syncCategory)
 
     private let cache: SnapshotCache
     private let policy: LocalWritePolicy
+    private let reporting: ReportingSetting
     private let widgetReloader: @Sendable () -> Void
     private let now: @Sendable () -> Date
     /// Returns a sleep that ends `duration` after *now* (the deadline is fixed when this is
@@ -40,24 +45,32 @@ public actor LocalOnlySyncService: BatterySyncing {
     private var flushTask: Task<Void, Never>?
     private var lastReloadAt: Date?
     private var trailingReloadTask: Task<Void, Never>?
+    /// The cache's devices after this process's last write or reset; `nil` before the first.
+    private var cachedDevices: [DeviceBattery]?
+    /// What widgets got at the last reload this process requested; `nil` = unknown.
+    private var widgetDevices: [DeviceBattery]?
     // Serialises `report` and held-write flushes, which suspend while the cache is written.
     private var isBusy = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     /// - Parameters:
     ///   - cache: the App Group snapshot cache (ADR-0009).
+    ///   - reporting: SYNC-001 R15a; ``removeAllData()`` turns it off and `report` writes
+    ///     nothing while it is off.
     ///   - widgetReloader: asks WidgetKit to reload, e.g. `{ WidgetCenter.shared.reloadAllTimelines() }`
     ///     in the app target. Called at most once per 60 s (SYNC-001 R8a).
     ///   - clock: drives held writes and the trailing widget reload; tests pass a manual clock.
     public init<C: Clock<Duration>>(
         cache: SnapshotCache,
         policy: LocalWritePolicy = LocalWritePolicy(),
+        reporting: ReportingSetting = .inMemory(),
         widgetReloader: @escaping @Sendable () -> Void,
         now: @escaping @Sendable () -> Date = Date.init,
         clock: C = ContinuousClock()
     ) {
         self.cache = cache
         self.policy = policy
+        self.reporting = reporting
         self.widgetReloader = widgetReloader
         self.now = now
         self.timer = { duration in
@@ -75,10 +88,11 @@ public actor LocalOnlySyncService: BatterySyncing {
     /// The first non-accessory reading is this device (`ownDeviceID`).
     /// - Returns: `.uploaded` when something was written now, else `.held(until:)` with the
     ///   earliest pending write, else `.skipped`; `.failed(retryAt: nil)` when the cache
-    ///   write failed (the next trigger tries again).
+    ///   write failed (the next trigger tries again). `.skipped` while reporting is off (R15a).
     public func report(_ readings: [DeviceBattery], reason: ReportReason) async -> ReportOutcome {
         await acquire()
         defer { release() }
+        guard reporting.isEnabled else { return .skipped }  // R15a, checked under the gate
         let t = now()
         let ownID = readings.first(where: { $0.kind != .accessory })?.id
         var due: [Pending] = []
@@ -140,18 +154,45 @@ public actor LocalOnlySyncService: BatterySyncing {
         return await Task.detached(priority: .utility) { cache.read() != nil }.value
     }
 
+    /// SYNC-001 R15a, local half: under the gate (after any report or flush in progress),
+    /// resets the cache, drops held writes and what was written, requests a widget reload
+    /// and turns reporting off. A failed reset throws and changes nothing.
+    public func removeAllData() async throws {
+        await acquire()
+        defer { release() }
+        let cache = cache
+        try await Task.detached(priority: .utility) { try cache.reset() }.value
+        flushTask?.cancel()
+        flushTask = nil
+        pending = [:]
+        written = [:]
+        cachedDevices = []
+        reporting.setEnabled(false)
+        requestWidgetReload()
+    }
+
+    /// Turns reporting back on (R15a). The next report writes at once (W1: nothing written).
+    public func resumeReporting() {
+        reporting.setEnabled(true)
+    }
+
+    /// The hidden set changed: widgets show it, so they reload (R8a, coalesced).
+    public func displayPreferencesChanged() {
+        requestWidgetReload()
+    }
+
     // MARK: Writing
 
     /// Upserts `slots` into the cache in one coordinated write (SYNC-002 R13), then
-    /// requests a widget reload if `devices` changed (SYNC-001 R8a).
+    /// requests a widget reload if what widgets show changed (SYNC-001 R8a).
     private func write(_ slots: [Pending]) async -> Bool {
         let cache = cache
         let values = slots.map(\.value)
         let ownID = slots.first(where: \.isOwn)?.value.id
         do {
-            let changed = try await Task.detached(priority: .utility) {
+            let (before, after) = try await Task.detached(priority: .utility) {
                 try cache.update { file in
-                    let before = file.devices
+                    let before = SnapshotFile.sorted(file.devices)
                     for value in values {
                         if let i = file.devices.firstIndex(where: { $0.id == value.id }) {
                             file.devices[i] = value
@@ -162,12 +203,15 @@ public actor LocalOnlySyncService: BatterySyncing {
                     file.devices = SnapshotFile.sorted(file.devices)
                     if let ownID { file.ownDeviceID = ownID }
                     file.syncStatus = .localOnly
-                    return file.devices != SnapshotFile.sorted(before)
+                    return (before, file.devices)
                 }
             }.value
             let t = now()
             for value in values { written[value.id] = Written(value: value, at: t) }
-            if changed { requestWidgetReload() }
+            cachedDevices = after
+            if Self.needsWidgetReload(before: before, after: after, received: widgetDevices, now: t) {
+                requestWidgetReload()
+            }
             return true
         } catch {
             // `written` is untouched, so it still matches the cache and the next report
@@ -203,6 +247,32 @@ public actor LocalOnlySyncService: BatterySyncing {
 
     // MARK: Widget reloads (SYNC-001 R8a)
 
+    /// Lead's call 17: reload only when what a widget shows changed (device set, level,
+    /// charging, plugged in, Low Power Mode, name, kind, accessory grouping), or when a
+    /// record's stale moment moved and the one widgets last received is less than
+    /// ``staleReloadLead`` away. `received == nil` (no reload yet in this process): any
+    /// change of `devices` reloads.
+    static func needsWidgetReload(before: [DeviceBattery], after: [DeviceBattery],
+                                  received: [DeviceBattery]?, now: Date) -> Bool {
+        guard before != after else { return false }
+        guard let received else { return true }
+        let shown = Dictionary(received.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        guard Set(shown.keys) == Set(after.map(\.id)) else { return true }
+        for d in after {
+            guard let r = shown[d.id] else { return true }
+            if d.level != r.level || d.isCharging != r.isCharging || d.isPluggedIn != r.isPluggedIn
+                || d.isLowPowerMode != r.isLowPowerMode || d.name != r.name || d.kind != r.kind
+                || d.accessory != r.accessory {
+                return true
+            }
+            let staleAt = FreshnessRule.staleDate(for: r)
+            if FreshnessRule.staleDate(for: d) != staleAt, staleAt < now.addingTimeInterval(staleReloadLead) {
+                return true
+            }
+        }
+        return false
+    }
+
     /// The first request in a quiet period reloads at once; requests within 60 s of the
     /// last reload mark one trailing reload at the end of the window.
     private func requestWidgetReload() {
@@ -215,14 +285,18 @@ public actor LocalOnlySyncService: BatterySyncing {
                 self.fireTrailingReload()
             }
         } else {
-            lastReloadAt = t
-            widgetReloader()
+            fireReload(at: t)
         }
     }
 
     private func fireTrailingReload() {
         trailingReloadTask = nil
-        lastReloadAt = now()
+        fireReload(at: now())
+    }
+
+    private func fireReload(at t: Date) {
+        lastReloadAt = t
+        if let cachedDevices { widgetDevices = cachedDevices }
         widgetReloader()
     }
 

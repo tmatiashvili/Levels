@@ -46,13 +46,18 @@ final class FakeSource: DeviceSnapshotSource {
         var removed: [DeviceID] = []
         var removeAll = 0
         var resume = 0
+        var preferencesChanged = 0
     }
 
     private let state: Mutex<(snapshot: SnapshotFile, calls: Calls, readError: Bool, refreshError: Bool, hangs: Bool)>
     private let broadcaster = ChangeBroadcaster()
 
-    init(_ snapshot: SnapshotFile, readError: Bool = false, refreshError: Bool = false, hangs: Bool = false) {
+    private let reportingEnabled: Bool
+
+    init(_ snapshot: SnapshotFile, readError: Bool = false, refreshError: Bool = false, hangs: Bool = false,
+         reportingEnabled: Bool = true) {
         state = Mutex((snapshot, Calls(), readError, refreshError, hangs))
+        self.reportingEnabled = reportingEnabled
     }
 
     var calls: Calls { state.withLock { $0.calls } }
@@ -99,6 +104,10 @@ final class FakeSource: DeviceSnapshotSource {
     }
 
     func resumeReporting() async { state.withLock { $0.calls.resume += 1 } }
+
+    var isReportingEnabled: Bool { reportingEnabled }
+
+    func displayPreferencesChanged() async { state.withLock { $0.calls.preferencesChanged += 1 } }
 }
 
 @MainActor

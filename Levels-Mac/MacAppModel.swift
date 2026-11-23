@@ -31,6 +31,7 @@ import os
     @ObservationIgnored let accessories: AccessoryReporter
     @ObservationIgnored let sync: any BatterySyncing
     @ObservationIgnored private let local: LocalOnlySyncService
+    @ObservationIgnored private let reporting: ReportingSetting
     @ObservationIgnored private let identity: any DeviceIdentityProviding
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var lastPopoverRefresh: Date?
@@ -50,8 +51,9 @@ import os
         groupDefaults = group.flatMap(UserDefaults.init(suiteName:)) ?? .standard
         let preferences = UserDefaultsDisplayPreferencesStore(suiteName: group)
 
+        let reporting = ReportingSetting(suiteName: group)  // SYNC-001 R15a, survives relaunch
         let relay = ChangeRelay()
-        let local = LocalOnlySyncService(cache: cache, widgetReloader: {
+        let local = LocalOnlySyncService(cache: cache, reporting: reporting, widgetReloader: {
             WidgetCenter.shared.reloadAllTimelines()  // SYNC-001 R8a, coalesced by the service
             Self.logger.notice("Requested widget reload")
             relay.fire()
@@ -61,17 +63,20 @@ import os
                                                               accessGroup: LevelsAppConfig.keychainAccessGroup))
         let reporter = BatteryReporter(reader: IOKitBatteryReader(), sync: sync, kind: .mac,
                                        identity: identity, preferences: preferences,
-                                       log: ReportLog(suiteName: group))
+                                       log: ReportLog(suiteName: group), reporting: reporting)
         let accessories = AccessoryReporter(reader: MacAccessoryReader(), sync: sync,
                                             parentID: { (try? identity.currentDeviceID()) ?? nil })
         let source = MacSnapshotSource(
-            base: SnapshotCacheSource(cache: cache, preferences: preferences) { reason in
+            base: SnapshotCacheSource(cache: cache, preferences: preferences, reporting: reporting,
+                                      removeAllData: { try await local.removeAllData() }) { reason in
                 await reporter.report(reason: reason)
             },
-            reporter: reporter, accessories: accessories, sync: sync)
+            reporter: reporter, accessories: accessories, sync: sync,
+            onDisplayPreferencesChanged: { await local.displayPreferencesChanged() })
         relay.set { source.notifyChanged() }
 
         self.local = local
+        self.reporting = reporting
         self.sync = sync
         self.identity = identity
         self.reporter = reporter
@@ -93,10 +98,14 @@ import os
             Self.logger.error("Device ID lookup failed: \(String(describing: error), privacy: .public)")
         }
         tasks.append(Task { await self.store.start() })
-        await reporter.start()  // MAC-002 R6a launch report, IOPS changes, 30-min heartbeat
-        await accessories.start()  // MAC-003: launch scan, HID connect/disconnect, 5/15-min poll
+        if reporting.isEnabled {
+            await reporter.start()  // MAC-002 R6a launch report, IOPS changes, 30-min heartbeat
+            await accessories.start()  // MAC-003: launch scan, HID connect/disconnect, 5/15-min poll
+        } else {
+            Self.logger.notice("Reporting is off (Remove all my data); reporters not started")
+        }
         observePowerSourceForAccessories()
-        observeSleepAndWake()
+        observeSleepAndWake()  // reporters must skip these while reporting is off
         // R10a (network reachable → refresh) and R11 (15-min fallback fetch) have nothing to
         // fetch without iCloud; LocalOnlySyncService.refresh is a cache re-read, so neither runs.
     }
@@ -184,7 +193,7 @@ struct LoggingSync: BatterySyncing {
         let outcome = await base.report(readings, reason: reason)
         for d in readings {
             Self.logger.notice("""
-                Report \(reason.rawValue, privacy: .public): \(d.name, privacy: .public)\
+                Report \(reason.rawValue, privacy: .public): \(d.name, privacy: .private)\
                 \(d.accessory.map { " [\($0.kind.rawValue) \($0.component.rawValue)]" } ?? "", privacy: .public) \
                 level=\(d.level.map(String.init) ?? "none", privacy: .public) \
                 charging=\(d.isCharging) pluggedIn=\(d.isPluggedIn.map(String.init) ?? "nil", privacy: .public) \
@@ -193,7 +202,7 @@ struct LoggingSync: BatterySyncing {
         }
         #if DEBUG
         if let data = try? Data(contentsOf: cacheURL), let json = String(data: data, encoding: .utf8) {
-            Self.logger.notice("snapshot.json (\(data.count) bytes): \(json, privacy: .public)")
+            Self.logger.notice("snapshot.json (\(data.count) bytes): \(json, privacy: .private)")  // holds names (ADR-0019 rule 3)
         }
         #endif
         onReport()
@@ -227,13 +236,19 @@ final class MacSnapshotSource: DeviceSnapshotSource {
     let reporter: BatteryReporter
     let accessories: AccessoryReporter
     let sync: any BatterySyncing
+    let onDisplayPreferencesChanged: @Sendable () async -> Void
 
-    init(base: SnapshotCacheSource, reporter: BatteryReporter, accessories: AccessoryReporter, sync: any BatterySyncing) {
+    init(base: SnapshotCacheSource, reporter: BatteryReporter, accessories: AccessoryReporter, sync: any BatterySyncing,
+         onDisplayPreferencesChanged: @escaping @Sendable () async -> Void) {
         self.base = base
         self.reporter = reporter
         self.accessories = accessories
         self.sync = sync
+        self.onDisplayPreferencesChanged = onDisplayPreferencesChanged
     }
+
+    var isReportingEnabled: Bool { base.isReportingEnabled }
+    func displayPreferencesChanged() async { await onDisplayPreferencesChanged() }
 
     func notifyChanged() { base.notifyChanged() }
     func current() async throws -> SnapshotFile { try await base.current() }
@@ -247,13 +262,24 @@ final class MacSnapshotSource: DeviceSnapshotSource {
     func setThisDeviceName(_ name: String?) async { await base.setThisDeviceName(name) }
     func remove(_ id: DeviceID) async throws { try await base.remove(id) }
 
+    /// Stops the reporter and waits for its in-flight report, then removes under the sync
+    /// service's gate (which also turns reporting off). On failure the reporter runs again.
     func removeAllData() async throws {
         await reporter.stop()
         await accessories.stop()
-        try await base.removeAllData()
+        await reporter.waitUntilIdle()
+        do {
+            try await base.removeAllData()
+        } catch {
+            MacAppModel.logger.error("Remove all data failed: \(String(describing: error), privacy: .public)")
+            await reporter.start()
+            await accessories.start()
+            throw error
+        }
         MacAppModel.logger.notice("Removed all data; reporting is off")
     }
 
+    /// Turns the setting back on, then starts the reporter, whose start reports `.launch` once.
     func resumeReporting() async {
         await base.resumeReporting()
         await reporter.start()
