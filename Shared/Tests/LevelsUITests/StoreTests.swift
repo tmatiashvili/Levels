@@ -219,6 +219,23 @@ struct StoreTests {
         #expect(source.calls.resume == 1)
         #expect(!store.isReportingOff)
     }
+
+    /// SYNC-001 R15a: reporting stays off across a relaunch, so a new store starts with the banner.
+    @Test func reportingOffIsLoadedFromTheSource() {
+        let (store, _) = makeStore(FakeSource(snapshot([me]), reportingEnabled: false))
+        #expect(store.isReportingOff)
+        let (on, _) = makeStore(FakeSource(snapshot([me])))
+        #expect(!on.isReportingOff)
+    }
+
+    /// SYNC-001 R8a (lead's call 17): widgets show the hidden set, so hiding asks for a reload.
+    @Test func hidingTellsTheSource() async {
+        let source = FakeSource(snapshot([me, phone]))
+        let (store, _) = makeStore(source)
+        await store.reload()
+        store.setHidden(phone.id, true)
+        #expect(await eventually { source.calls.preferencesChanged == 1 })
+    }
 }
 
 @Suite("UI-001 display preferences")
@@ -257,7 +274,14 @@ struct LocalSourceTests {
 
         let reasons = ReasonLog()
         let prefs = InMemoryDisplayPreferencesStore()
-        let source = SnapshotCacheSource(cache: cache, preferences: prefs) { await reasons.append($0) }
+        let reporting = ReportingSetting.inMemory()
+        let removals = ReasonLog()
+        let source = SnapshotCacheSource(cache: cache, preferences: prefs, reporting: reporting,
+                                         removeAllData: {
+                                             try cache.reset()
+                                             reporting.setEnabled(false)
+                                             await removals.append(.launch)
+                                         }) { await reasons.append($0) }
         try await source.requestRefresh(userInitiated: true)
         try await source.requestRefresh(userInitiated: false)
         await source.setThisDeviceName("Work Mac")
@@ -266,8 +290,15 @@ struct LocalSourceTests {
 
         try await source.remove(id(1))  // the Mac and its accessories
         #expect(try await source.current().devices.map(\.id) == [id(2)])
-        try await source.removeAllData()
+        try await source.removeAllData()  // goes through sync's removal (R15a)
+        #expect(await removals.all.count == 1)
         #expect(try await source.current().devices.isEmpty)
+        #expect(!source.isReportingEnabled)
+
+        // Resume only turns the setting back on; the app's reporter start reports `.launch` once.
+        await source.resumeReporting()
+        #expect(source.isReportingEnabled)
+        #expect(await reasons.all == [.userRefresh, .foreground, .userRefresh])
     }
 
     @MainActor @Test func inMemorySourceDrivesStore() async {

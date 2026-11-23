@@ -21,6 +21,15 @@ public protocol DeviceSnapshotSource: Sendable {
     func removeAllData() async throws
     /// Turns reporting back on after ``removeAllData()`` (SYNC-001 R15a).
     func resumeReporting() async
+    /// `false` after ``removeAllData()`` until ``resumeReporting()``, across relaunches (R15a).
+    var isReportingEnabled: Bool { get }
+    /// The hidden set changed; widgets show it, so the app requests a reload (SYNC-001 R8a).
+    func displayPreferencesChanged() async
+}
+
+extension DeviceSnapshotSource {
+    /// Sources with no widgets to reload do nothing.
+    public func displayPreferencesChanged() async {}
 }
 
 extension ReportReason {

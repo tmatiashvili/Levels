@@ -33,6 +33,8 @@ public actor BatteryReporter {
     private let deviceID: @Sendable () -> DeviceID?
     private let deviceName: @Sendable () -> String
     private let log: ReportLog
+    /// SYNC-001 R15a: while off, nothing is read or handed to sync.
+    private let reporting: ReportingSetting
     private let now: @Sendable () -> Date
     /// Returns a heartbeat sleep whose deadline is fixed when this is called.
     private let heartbeatTimer: @Sendable () -> @Sendable () async throws -> Void
@@ -55,6 +57,8 @@ public actor BatteryReporter {
     ///     `nil` (Keychain not readable yet) skips the report.
     ///   - deviceName: the name to write (SYNC-002 R17), read on every report so a rename
     ///     reaches sync. Typically `DefaultDeviceName.resolved(kind:thisDeviceName:)`.
+    ///   - reporting: "Remove all my data" turns it off (SYNC-001 R15a); while off, `start`,
+    ///     `report`, change events and the heartbeat send nothing.
     ///   - clock: drives the heartbeat; tests pass a manual clock.
     public init<C: Clock<Duration>>(
         reader: any BatteryReader,
@@ -63,6 +67,7 @@ public actor BatteryReporter {
         deviceID: @escaping @Sendable () -> DeviceID?,
         deviceName: (@Sendable () -> String)? = nil,
         log: ReportLog = .inMemory(),
+        reporting: ReportingSetting = .inMemory(),
         now: @escaping @Sendable () -> Date = Date.init,
         clock: C = ContinuousClock()
     ) {
@@ -73,6 +78,7 @@ public actor BatteryReporter {
         self.deviceID = deviceID
         self.deviceName = deviceName ?? { DefaultDeviceName.current(kind: kind) }
         self.log = log
+        self.reporting = reporting
         self.now = now
         self.heartbeatTimer = {
             let deadline = clock.now.advanced(by: Self.heartbeatInterval)
@@ -89,21 +95,23 @@ public actor BatteryReporter {
         identity: any DeviceIdentityProviding,
         preferences: any DisplayPreferencesStore,
         log: ReportLog = .inMemory(),
+        reporting: ReportingSetting = .inMemory(),
         now: @escaping @Sendable () -> Date = Date.init,
         clock: C = ContinuousClock()
     ) {
         self.init(reader: reader, sync: sync, kind: kind,
                   deviceID: { (try? identity.currentDeviceID()) ?? nil },
                   deviceName: { DefaultDeviceName.resolved(kind: kind, thisDeviceName: preferences.load().thisDeviceName) },
-                  log: log, now: now, clock: clock)
+                  log: log, reporting: reporting, now: now, clock: clock)
     }
 
     // MARK: Lifecycle (MAC-002 R6)
 
     /// Reports `.launch` (R6a), then consumes the reader's changes (R6b, R6c) and runs
-    /// the heartbeat (R6f) until ``stop()``. Calling it again while running does nothing.
+    /// the heartbeat (R6f) until ``stop()``. Calling it again while running, or while
+    /// reporting is off (SYNC-001 R15a), does nothing.
     public func start() {
-        guard runTask == nil else { return }
+        guard runTask == nil, reporting.isEnabled else { return }
         let changes = reader.changes()
         runTask = Task {
             await self.report(reason: .launch)
@@ -121,6 +129,13 @@ public actor BatteryReporter {
         runTask = nil
         heartbeatTask?.cancel()
         heartbeatTask = nil
+    }
+
+    /// Returns once the report in progress and any queued behind it have finished
+    /// (SYNC-001 R15a: removal runs after the in-flight report, not alongside it).
+    public func waitUntilIdle() async {
+        await acquire()
+        release()
     }
 
     // MARK: Reporting
@@ -150,6 +165,7 @@ public actor BatteryReporter {
     private func reportNowOutcome(reason: ReportReason) async throws(ReportError) -> (reading: BatteryReading, outcome: ReportOutcome)? {
         await acquire()
         defer { release() }
+        guard isReporting(reason) else { return nil }
         let reading = await reader.read()
         guard !reading.isReadFailure else {
             noteReadFailure()
@@ -170,6 +186,7 @@ public actor BatteryReporter {
     private func handleChange(_ reading: BatteryReading) async {
         await acquire()
         defer { release() }
+        guard isReporting(.batteryChange) else { return }
         guard !reading.isReadFailure else {
             noteReadFailure()
             return
@@ -217,6 +234,15 @@ public actor BatteryReporter {
         return outcome
     }
 
+    /// SYNC-001 R15a: `false` (and logged) while reporting is off.
+    private func isReporting(_ reason: ReportReason) -> Bool {
+        guard reporting.isEnabled else {
+            Self.logger.info("Reporting is off; skipping report \(reason.rawValue, privacy: .public)")
+            return false
+        }
+        return true
+    }
+
     private func noteReadFailure() {
         guard readFailureLogCount == 0 else { return }
         readFailureLogCount += 1
@@ -244,6 +270,7 @@ public actor BatteryReporter {
     private func heartbeatFired() async {
         guard !Task.isCancelled else { return }
         heartbeatTask = nil
+        guard isReporting(.heartbeat) else { return }  // not re-armed: reporting is off
         await report(reason: .heartbeat)
         if heartbeatTask == nil { armHeartbeat() }  // not re-armed by an accepted write
     }

@@ -17,8 +17,9 @@ import Observation
     public private(set) var state: State = .loading
     /// True while a user refresh runs (spinner).
     public private(set) var isRefreshing = false
-    /// True after ``removeAllData()`` until ``resumeReporting()`` (UI-002 R12 banner).
-    public private(set) var isReportingOff = false
+    /// True after ``removeAllData()`` until ``resumeReporting()``, across relaunches (UI-002 R12
+    /// banner, SYNC-001 R15a).
+    public private(set) var isReportingOff: Bool
     /// This device's ID; `nil` before it registered (rename is then disabled).
     public private(set) var thisDeviceID: DeviceID?
     public private(set) var preferences: DisplayPreferences
@@ -42,6 +43,7 @@ import Observation
         self.source = source
         preferencesStore = preferences
         self.preferences = preferences.load()
+        isReportingOff = !source.isReportingEnabled
         self.now = now
         self.refreshTimeout = refreshTimeout
     }
@@ -129,6 +131,8 @@ import Observation
         preferencesStore.save(p)
         preferences = p
         rebuild()
+        let source = self.source
+        Task { await source.displayPreferencesChanged() }  // widgets hide it too (SYNC-001 R8a)
     }
 
     /// Removes a device and its accessories, or every record of a grouped row (UI-002 R11,

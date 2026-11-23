@@ -307,6 +307,52 @@ struct BatteryReporterTests {
         #expect(names.last != "Work Mac" && names.last?.isEmpty == false)  // default name again
     }
 
+    // MARK: SYNC-001 R15a reporting off
+
+    func reporter(_ reader: FixedBatteryReader, reporting: ReportingSetting) -> BatteryReporter {
+        let id = self.id, clock = clock
+        return BatteryReporter(reader: reader, sync: sync, kind: .mac, deviceID: { id },
+                               deviceName: { "Office Mac" }, log: log, reporting: reporting,
+                               now: { clock.date }, clock: clock)
+    }
+
+    @Test func R15a_offSendsNothingFromStartReportOrRename() async {
+        let reporting = ReportingSetting.inMemory(enabled: false)
+        let r = reporter(FixedBatteryReader(reading(40)), reporting: reporting)
+        await r.start()
+        await settle()
+        for reason in [ReportReason.sleep, .wake, .userRefresh, .foreground] {
+            #expect(await r.report(reason: reason) == nil)
+        }
+        #expect(await sync.calls.isEmpty)
+        #expect(clock.sleeperCount == 0)  // no heartbeat armed
+    }
+
+    @Test func R15a_turningOffStopsChangesAndTheHeartbeat() async {
+        let reporting = ReportingSetting.inMemory()
+        let reader = FixedBatteryReader(reading(50))
+        let r = reporter(reader, reporting: reporting)
+        await r.start()
+        await waitFor { [sync, clock] in await sync.calls.count == 1 && clock.sleeperCount == 1 }
+        reporting.setEnabled(false)
+        reader.emit(reading(49))
+        clock.advance(by: .seconds(30 * 60))  // heartbeat fires, sends nothing, not re-armed
+        await settle()
+        #expect(await sync.reasons == [.launch])
+        await waitFor { [clock] in clock.sleeperCount == 0 }
+        await r.stop()
+    }
+
+    @Test func R15a_waitUntilIdleReturnsAfterTheReportInFlight() async {
+        await sync.set(yields: 50)
+        let r = reporter(FixedBatteryReader(reading(40)))
+        let inFlight = Task { await r.report(reason: .userRefresh) }
+        await waitFor { [sync] in await sync.maxInFlight == 1 }
+        await r.waitUntilIdle()
+        #expect(await sync.calls.count == 1)
+        _ = await inFlight.value
+    }
+
     @Test func identityNil_skipsReport() async {
         let r = BatteryReporter(reader: FixedBatteryReader(reading(40)), sync: sync, kind: .mac,
                                 identity: FixedDeviceIdentity(nil), preferences: InMemoryDisplayPreferencesStore(), clock: clock)

@@ -85,12 +85,14 @@ final class ReloadCounter: Sendable {
 struct LocalOnlySyncServiceTests {
     let clock = ManualClock()
     let reloads = ReloadCounter()
+    let reporting = ReportingSetting.inMemory()
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("levels-local-\(UUID().uuidString)")
     var cache: SnapshotCache { SnapshotCache(directory: directory) }
 
     func service() -> LocalOnlySyncService {
         let clock = clock, reloads = reloads
-        return LocalOnlySyncService(cache: cache, widgetReloader: { reloads.hit() }, now: { clock.date }, clock: clock)
+        return LocalOnlySyncService(cache: cache, reporting: reporting, widgetReloader: { reloads.hit() },
+                                    now: { clock.date }, clock: clock)
     }
 
     func cachedMac() -> DeviceBattery? { cache.read()?.devices.first { $0.id == macID } }
@@ -169,9 +171,12 @@ struct LocalOnlySyncServiceTests {
         advance(10)
         await settle()
         #expect(cachedMac() == final)
-        #expect(reloads.value == 1)  // the write at 23 s falls in the 60 s reload window (R8a)
-        advance(30)
-        await waitFor { [reloads] in reloads.value == 2 }  // one trailing reload
+        #expect(reloads.value == 1)
+        advance(60)
+        await settle()
+        // Lead's call 17: the final state equals what widgets have and the stale moment is
+        // an hour away, so the write requests no reload at all.
+        #expect(reloads.value == 1)
     }
 
     @Test func LOCAL_W6_heartbeatRefreshesUpdatedAtAfter30Min() async {
@@ -190,8 +195,8 @@ struct LocalOnlySyncServiceTests {
         _ = await s.report([mac(at: clock.date)], reason: .launch)
         #expect(reloads.value == 1)
         advance(10)
-        _ = await s.report([mac(at: clock.date)], reason: .wake)       // changes updatedAt
-        _ = await s.report([mac(at: clock.date)], reason: .sleep)      // inside the floor: held
+        _ = await s.report([mac(level: 79, at: clock.date)], reason: .wake)   // a shown change
+        _ = await s.report([mac(level: 78, at: clock.date)], reason: .sleep)  // inside the floor: held
         #expect(reloads.value == 1)
         advance(49)
         await settle()
@@ -201,6 +206,121 @@ struct LocalOnlySyncServiceTests {
         advance(120)
         await settle()
         #expect(reloads.value == 2)                                     // exactly one trailing reload
+    }
+
+    /// Lead's call 17: a heartbeat that only moves `updatedAt` reloads only once the stale
+    /// moment widgets have (65 min for a Mac) is less than 35 min away.
+    @Test func LOCAL_R8a_heartbeatReloadsOnlyNearTheReceivedStaleMoment() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)        // widgets: stale at +65 min
+        #expect(reloads.value == 1)
+        advance(30 * 60)
+        #expect(await s.report([mac(at: clock.date)], reason: .heartbeat) == .uploaded)  // 35 min away
+        await settle()
+        #expect(reloads.value == 1)
+        advance(30 * 60)
+        #expect(await s.report([mac(at: clock.date)], reason: .heartbeat) == .uploaded)  // 5 min away
+        #expect(reloads.value == 2)
+        advance(30 * 60)
+        _ = await s.report([mac(at: clock.date)], reason: .heartbeat)   // judged against the new stale moment
+        await settle()
+        #expect(reloads.value == 2)
+    }
+
+    @Test func LOCAL_R8a_updatedAtOnlyChangeFarFromStaleRequestsNoReload() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        advance(120)
+        #expect(await s.report([mac(at: clock.date)], reason: .userRefresh) == .uploaded)  // moves updatedAt
+        advance(120)
+        await settle()
+        #expect(reloads.value == 1)
+        #expect(cachedMac()?.updatedAt == clock.date - 120)
+    }
+
+    @Test(arguments: [
+        mac(level: 70, at: .distantPast), mac(charging: true, pluggedIn: true, at: .distantPast),
+        mac(pluggedIn: true, at: .distantPast), mac(lowPower: true, at: .distantPast),
+        mac(name: "Renamed", at: .distantPast),
+    ])
+    func LOCAL_R8a_shownFieldChangesReload(changed: DeviceBattery) async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        advance(120)
+        var next = changed
+        next.updatedAt = clock.date
+        _ = await s.report([next], reason: .userRefresh)
+        advance(3)  // charger and Low Power Mode changes wait for the debounce
+        await waitFor { [reloads] in reloads.value == 2 }  // outside the 60 s window: at once
+        #expect(cachedMac() == next)
+    }
+
+    @Test func LOCAL_R8a_addedDeviceReloads() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        advance(120)
+        _ = await s.report([mac(at: clock.date - 120), airpod(level: 50, at: clock.date)], reason: .batteryChange)
+        #expect(reloads.value == 2)
+    }
+
+    @Test func LOCAL_R8a_hiddenSetChangeReloadsCoalesced() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        advance(120)
+        await s.displayPreferencesChanged()
+        #expect(reloads.value == 2)
+        await s.displayPreferencesChanged()   // inside 60 s: one trailing reload
+        #expect(reloads.value == 2)
+        advance(60)
+        await waitFor { [reloads] in reloads.value == 3 }
+    }
+
+    // MARK: SYNC-001 R15a
+
+    @Test func LOCAL_R15a_removeAllDataResetsDropsHeldWritesReloadsAndStopsReporting() async throws {
+        let s = service()
+        let t0 = clock.date
+        _ = await s.report([mac(level: 80, at: t0)], reason: .launch)
+        advance(20)
+        #expect(await s.report([mac(level: 70, at: clock.date)], reason: .batteryChange) == .held(until: t0 + 60))
+        try await s.removeAllData()
+        #expect(cache.read() == nil)
+        #expect(!reporting.isEnabled)
+
+        advance(40)  // the held level-70 write was due now; the trailing reload fires
+        await waitFor { [reloads] in reloads.value == 2 }  // widgets learn the cache is empty
+        await settle()
+        #expect(cache.read() == nil)
+        #expect(await s.report([mac(at: clock.date)], reason: .userRefresh) == .skipped)
+        #expect(cache.read() == nil)
+
+        await s.resumeReporting()
+        #expect(reporting.isEnabled)
+        let back = mac(level: 60, at: clock.date)
+        #expect(await s.report([back], reason: .launch) == .uploaded)  // W1: nothing written
+        #expect(cache.read()?.devices == [back])
+    }
+
+    @Test func LOCAL_R15a_removalWaitsForAReportInProgress() async throws {
+        let s = service()
+        async let first = s.report([mac(at: clock.date)], reason: .launch)
+        async let removal: Void = s.removeAllData()
+        _ = await first
+        try await removal
+        // Whichever ran first, the report did not land after the reset.
+        #expect(cache.read() == nil)
+    }
+
+    @Test func LOCAL_R15a_failedResetChangesNothing() async throws {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        // A read-only parent directory makes the delete fail.
+        let parent = cache.fileURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: parent.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parent.path) }
+        await #expect(throws: (any Error).self) { try await s.removeAllData() }
+        #expect(reporting.isEnabled)
+        #expect(cachedMac() != nil)
     }
 
     @Test func LOCAL_AC9a_unchangedDevicesRequestNoReload() async {
