@@ -10,26 +10,33 @@ func batteryTint(isCharging: Bool, isLow: Bool) -> Color {
 }
 
 /// Ring gauge: `Gauge` with `.accessoryCircularCapacity` (ADR-0016 rule 3).
+/// That style always draws at its native ``nativeSize`` and ignores `.frame`, so the ring is
+/// scaled to `size`. No value label inside: the caller shows the percentage next to it.
 public struct BatteryRing: View {
+    /// The size `.accessoryCircularCapacity` draws at, whatever the frame.
+    public static let nativeSize: CGFloat = 58
+
     let level: Int
     let isCharging: Bool
     let isLow: Bool
+    let size: CGFloat
 
-    public init(level: Int, isCharging: Bool, isLow: Bool) {
+    public init(level: Int, isCharging: Bool, isLow: Bool, size: CGFloat = BatteryRing.nativeSize) {
         self.level = DeviceBattery.clampedLevel(level)
         self.isCharging = isCharging
         self.isLow = isLow
+        self.size = size
     }
 
     public var body: some View {
         Gauge(value: Double(level), in: 0...100) {
             EmptyView()
-        } currentValueLabel: {
-            Text(level, format: .number)
         }
         .gaugeStyle(.accessoryCircularCapacity)
         .tint(batteryTint(isCharging: isCharging, isLow: isLow))
         .widgetAccentable()
+        .scaleEffect(size / Self.nativeSize)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)  // the row carries the label (R9)
     }
 }

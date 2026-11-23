@@ -25,16 +25,16 @@ struct MenuBarLabel: View {
 /// The popover (UI-004 R6): banner + list (this Mac first) + footer. Width 320, height up to 480.
 struct MenuBarPopover: View {
     @Environment(MacAppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         DevicesPanel(highlighted: nil)
             .frame(width: 320)
-            .frame(height: Self.height(rows: model.store.rows.count))
+            .frame(height: PopoverLayout.height(rows: model.store.rows, state: model.store.state,
+                                                isReportingOff: model.store.isReportingOff,
+                                                isStacked: DeviceRow.isStacked(dynamicTypeSize)))
             .onAppear { model.popoverOpened() }  // UI-004 R7
     }
-
-    /// Fits the rows up to 480 pt, then the list scrolls.
-    static func height(rows: Int) -> CGFloat { min(480, CGFloat(max(rows, 1)) * 58 + 64) }
 }
 
 /// The device window (MAC-001 R2a): the popover content at window size, opened by
@@ -88,6 +88,7 @@ struct DevicesPanel: View {
         VStack(spacing: 0) {
             DeviceList(store: model.store, showsOldDevices: false, highlighted: highlighted)  // old devices: Settings (R9)
                 .scrollContentBackground(.hidden)
+                .environment(\.isLocalOnly, true)  // owner decision K: this build has no other devices
             Divider()
             footer
         }
@@ -107,6 +108,8 @@ struct DevicesPanel: View {
             Spacer()
             Button { model.userRefresh() } label: {
                 Image(systemName: "arrow.clockwise")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .keyboardShortcut("r", modifiers: .command)  // UI-004 R6, R7
@@ -124,14 +127,17 @@ struct DevicesPanel: View {
                 Button("Quit Levels") { NSApp.terminate(nil) }.keyboardShortcut("q", modifiers: .command)  // MAC-001 R3, R12
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
             .accessibilityLabel("More")
         }
+        .controlSize(.large)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
     }
 
     private func showSettings() {
