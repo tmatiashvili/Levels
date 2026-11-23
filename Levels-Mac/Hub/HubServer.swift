@@ -205,10 +205,15 @@ import os
         window.close()
     }
 
+    /// "They match" (NET-002 R6a, lead's call 30): the owner saw the same number on both screens.
+    func approvePairing() {
+        if window.approve() { Self.logger.notice("Pairing: owner confirmed the numbers match") }
+    }
+
     private func windowChanged() async {
         pairingState = window.state
         expiryTask?.cancel()
-        if case .open(_, let endsAt, _) = pairingState {
+        if let endsAt = window.deadline {
             // One-shot wait tied to the window (R17): ends it on time even with the sheet idle.
             let window = window
             expiryTask = Task {

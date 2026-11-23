@@ -16,24 +16,58 @@ private func pairing(_ tag: String, name: String) -> HubPairing {
     HubPairing(hubID: UUID(), hubTag: tag, hubDeviceID: DeviceID(UUID()), hubName: name, key: Data(count: 32), pairedAt: .now)
 }
 
-/// A pairer that reports a confirmation number and waits until released (the
-/// feature/net-security shape), or answers at once.
-private final class FakePairer: MacPairer {
+/// A session that returns `result` only after both They match taps (local + `macApproves()`),
+/// like ``PairingSession`` (NET-002 R6b).
+private final class FakeSession: MacPairingSession {
+    let confirmationCode: String
     let result: Result<HubPairing, PairError>
-    let confirmation: String?
-    private let gate = Mutex<CheckedContinuation<Void, Never>?>(nil)
-    private let waits: Bool
-    init(_ result: Result<HubPairing, PairError>, confirmation: String? = nil, waits: Bool = false) {
-        self.result = result
-        self.confirmation = confirmation
-        self.waits = waits
+    private struct State {
+        var local: Bool?
+        var mac = false
+        var waiter: CheckedContinuation<Result<HubPairing, PairError>, Never>?
     }
-    func release() { gate.withLock { $0?.resume(); $0 = nil } }
-    func pair(hub: DiscoveredHub, code: String, me: PairRequestIdentity,
-              onConfirmationNumber: @escaping @Sendable (String) -> Void) async throws(PairError) -> HubPairing {
-        if let confirmation { onConfirmationNumber(confirmation) }
-        if waits { await withCheckedContinuation { c in gate.withLock { $0 = c } } }
-        return try result.get()
+    private let state = Mutex(State())
+    init(_ result: Result<HubPairing, PairError>, confirmation: String) {
+        self.result = result
+        self.confirmationCode = confirmation
+    }
+    var confirmedLocally: Bool { state.withLock { $0.local == true } }
+    var cancelled: Bool { state.withLock { $0.local == false } }
+    func confirmLocally() { update { if $0.local == nil { $0.local = true } } }
+    func cancel() { update { if $0.local == nil { $0.local = false } } }
+    func macApproves() { update { $0.mac = true } }
+    func macRefuses() { update { s in s.waiter?.resume(returning: .failure(.refused)); s.waiter = nil } }
+    private func update(_ change: (inout State) -> Void) {
+        state.withLock { s in
+            change(&s)
+            guard let w = s.waiter else { return }
+            if s.local == false { w.resume(returning: .failure(.refused)); s.waiter = nil }
+            else if s.local == true && s.mac { w.resume(returning: result); s.waiter = nil }
+        }
+    }
+    func finish() async throws(PairError) -> HubPairing {
+        let r = await withCheckedContinuation { c in
+            state.withLock { $0.waiter = c }
+            update { _ in }
+        }
+        return try r.get()
+    }
+}
+
+private final class Saves: Sendable {
+    private let n = Mutex(0)
+    var count: Int { n.withLock { $0 } }
+    func add() { n.withLock { $0 += 1 } }
+}
+
+private final class FakePairer: MacPairer {
+    let session: FakeSession?
+    let startError: PairError?
+    init(session: FakeSession) { self.session = session; self.startError = nil }
+    init(failing error: PairError) { self.session = nil; self.startError = error }
+    func start(hub: DiscoveredHub, code: String, me: PairRequestIdentity) async throws(PairError) -> any MacPairingSession {
+        if let startError { throw startError }
+        return session!
     }
 }
 
@@ -45,28 +79,28 @@ private final class FakePairer: MacPairer {
     }
 
     @Test func AC2_noBrowseBeforeContinue() {
-        let f = flow(FakePairer(.failure(.refused)))
+        let f = flow(FakePairer(failing: .refused))
         #expect(f.step == .explain && f.browseCount == 0)
         f.continueTapped()
         #expect(f.step == .choose && f.browseCount == 1)
     }
 
     @Test func oneHubIsPreselectedAndClosedWindowsAreHidden() {
-        let f = flow(FakePairer(.failure(.refused)))
+        let f = flow(FakePairer(failing: .refused))
         f.continueTapped()
         f._receive([hub("ab12"), hub("cd34", pairing: false)])
         #expect(f.hubs.map(\.tag) == ["ab12"] && f.selectedTag == "ab12")
     }
 
     @Test func codeFieldKeepsSixDigits() {
-        let f = flow(FakePairer(.failure(.refused)))
+        let f = flow(FakePairer(failing: .refused))
         f.code = "12a3 4567"
         #expect(f.code == "123456")
         #expect(PairingText.grouped("123456") == "123 456")
     }
 
     @Test func wrongCodeShowsTheNET002TextAndKeepsTheField() async throws {
-        let f = flow(FakePairer(.failure(.wrongCode)))
+        let f = flow(FakePairer(failing: .wrongCode))
         f.continueTapped()
         f._receive([hub("ab12")])
         f.code = "111111"
@@ -76,35 +110,64 @@ private final class FakePairer: MacPairer {
         #expect(f.code == "111111")
     }
 
-    @Test func confirmationNumberIsShownWhileWaitingThenConnected() async throws {
-        let pairer = FakePairer(.success(pairing("ab12", name: "Office Mac")), confirmation: "482913", waits: true)
-        let f = flow(pairer)
+    private func submitted(_ pairer: FakePairer, saved: Saves? = nil) -> ConnectMacFlowModel {
+        let f = ConnectMacFlowModel(browse: { AsyncThrowingStream { _ in } }, pairer: pairer, me: { me },
+                                    existing: { nil }, save: { _ in saved?.add() })
         f.continueTapped()
         f._receive([hub("ab12")])
         f.code = "123456"
         f.submit()
-        try await waitUntil { f.step == .waitingForMac(confirmation: "482913") }
-        pairer.release()
+        return f
+    }
+
+    @Test func R6b_numberThenBothTapsConnect() async throws {
+        let session = FakeSession(.success(pairing("ab12", name: "Office Mac")), confirmation: "482913")
+        let saved = Saves()
+        let f = submitted(FakePairer(session: session), saved: saved)
+        try await waitUntil { f.step == .compare(number: "482913", confirmedHere: false) }
+        session.macApproves()                 // the Mac's 204 alone is not enough
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.step == .compare(number: "482913", confirmedHere: false) && saved.count == 0)
+        f.confirmMatch()
+        #expect(session.confirmedLocally)
+        try await waitUntil { f.step == .connected(macName: "Office Mac") }
+        #expect(saved.count == 1)
+    }
+
+    @Test func R6b_iPhoneFirstThenWaitsForTheMac() async throws {
+        let session = FakeSession(.success(pairing("ab12", name: "Office Mac")), confirmation: "482913")
+        let f = submitted(FakePairer(session: session))
+        try await waitUntil { f.step == .compare(number: "482913", confirmedHere: false) }
+        f.confirmMatch()
+        #expect(f.step == .compare(number: "482913", confirmedHere: true))
+        session.macApproves()
         try await waitUntil { f.step == .connected(macName: "Office Mac") }
     }
 
-    @Test func cancelWhileWaitingIgnoresALateAnswer() async throws {
-        let pairer = FakePairer(.success(pairing("ab12", name: "Office Mac")), waits: true)
-        let f = flow(pairer)
-        f.continueTapped()
-        f._receive([hub("ab12")])
-        f.code = "123456"
-        f.submit()
-        try await waitUntil { f.step == .waitingForMac(confirmation: nil) }
+    @Test func R6b_cancelOnTheIPhoneAfterTheMacSavesNothing() async throws {
+        let session = FakeSession(.success(pairing("ab12", name: "Office Mac")), confirmation: "482913")
+        let saved = Saves()
+        let f = submitted(FakePairer(session: session), saved: saved)
+        try await waitUntil { f.step == .compare(number: "482913", confirmedHere: false) }
+        session.macApproves()
         f.cancelWaiting()
-        #expect(f.step == .choose)
-        pairer.release()
+        #expect(f.step == .choose && session.cancelled)
         try await Task.sleep(for: .milliseconds(100))
-        #expect(f.step == .choose)
+        #expect(f.step == .choose && saved.count == 0 && f.errorText == nil)
+    }
+
+    @Test func cancelOnTheMacShowsTheText() async throws {
+        let session = FakeSession(.success(pairing("ab12", name: "Office Mac")), confirmation: "482913")
+        let f = submitted(FakePairer(session: session))
+        try await waitUntil { f.step == .compare(number: "482913", confirmedHere: false) }
+        f.confirmMatch()
+        session.macRefuses()
+        try await waitUntil { f.step == .choose }
+        #expect(f.errorText == "Pairing was cancelled on the Mac. Get a new code and try again.")
     }
 
     @Test func R10_anotherMacAsksToReplace() {
-        let f = flow(FakePairer(.failure(.refused)), existing: pairing("zz99", name: "Old Mac"))
+        let f = flow(FakePairer(failing: .refused), existing: pairing("zz99", name: "Old Mac"))
         f.continueTapped()
         f._receive([hub("ab12")])
         f.code = "123456"

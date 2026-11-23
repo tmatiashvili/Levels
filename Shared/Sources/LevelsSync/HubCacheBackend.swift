@@ -93,10 +93,27 @@ public final class HubCacheBackend: HubBackend {
 
     public func pair(_ request: PairRequest) async throws(PairError) -> PairResponse {
         let response = try window.accept(request)
-        // The confirming request (R7) uses the new key, so the listener must hold it first.
-        await attached?.reload()
-        Self.logger.notice("Pairing accepted for \(request.deviceID.recordName, privacy: .public); waiting for confirmation")
+        Self.logger.notice("Pairing request from \(request.deviceID.recordName, privacy: .public); waiting for its key")
         return response
+    }
+
+    public func confirmPairing(_ request: PairConfirmRequest) async throws(PairError) {
+        try window.reveal(request)
+        // The `pair` key is gone now; no new pairing handshakes.
+        await attached?.reload()
+        Self.logger.notice("Pairing: waiting for the owner to compare the numbers")
+        switch await window.decision() {
+        case .matched:
+            // The confirming request (R7) uses the new key, so the listener must hold it first.
+            await attached?.reload()
+            Self.logger.notice("Pairing: numbers match; waiting for the device's first request")
+        case .cancelled:
+            Self.logger.notice("Pairing cancelled on the Mac")
+            throw .refused
+        case .expired:
+            Self.logger.notice("Pairing window ended before the numbers were compared")
+            throw .timedOut
+        }
     }
 
     public func seen(_ id: DeviceID) async {

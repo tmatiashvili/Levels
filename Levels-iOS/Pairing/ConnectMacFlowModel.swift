@@ -5,24 +5,36 @@ import LevelsModel
 import LevelsNet
 import Observation
 
-/// The pairing step behind the Connect flow (NET-002 R4–R7).
+/// The pairing step behind the Connect flow (NET-002 R4–R7, lead's call 30).
 ///
-/// Seam for feature/net-security: that pairing adds a 6-digit confirmation number shown on
-/// both the Mac and the iPhone, and finishes only after the owner taps "They match" on the
-/// Mac. Its pairer calls `onConfirmationNumber` once the number is known and returns only
-/// when the Mac confirmed; the flow shows the number with a spinner and Cancel meanwhile.
-/// ``CodePairer`` (today's protocol) never calls it.
+/// `start` runs the code handshake and the key exchange and returns a session with the
+/// 6-digit confirmation number. The flow shows it ("Does your Mac show this number?") with
+/// They match and Cancel; `finish` returns only after the owner tapped They match on BOTH
+/// the iPhone and the Mac (R6b), so the iPhone never trusts the Mac's answer alone.
 protocol MacPairer: Sendable {
-    func pair(hub: DiscoveredHub, code: String, me: PairRequestIdentity,
-              onConfirmationNumber: @escaping @Sendable (String) -> Void) async throws(PairError) -> HubPairing
+    func start(hub: DiscoveredHub, code: String, me: PairRequestIdentity) async throws(PairError) -> any MacPairingSession
 }
 
-/// Today's pairing: the code only (NET-002 as merged).
+/// One pairing in progress (``PairingSession`` in the app).
+protocol MacPairingSession: AnyObject, Sendable {
+    var confirmationCode: String { get }
+    /// They match on the iPhone.
+    func confirmLocally()
+    /// Both They match taps, then the first request with the new key.
+    func finish() async throws(PairError) -> HubPairing
+    /// Cancel on the iPhone: nothing is returned or saved.
+    func cancel()
+}
+
+extension PairingSession: MacPairingSession {
+    func finish() async throws(PairError) -> HubPairing { try await finish(now: Date()) }
+}
+
+/// The real pairer (NET-002 with the confirmation number).
 struct CodePairer: MacPairer {
     var client = PairingClient()
-    func pair(hub: DiscoveredHub, code: String, me: PairRequestIdentity,
-              onConfirmationNumber: @escaping @Sendable (String) -> Void) async throws(PairError) -> HubPairing {
-        try await client.pair(with: hub.endpoint, hubTag: hub.tag, code: code, me: me)
+    func start(hub: DiscoveredHub, code: String, me: PairRequestIdentity) async throws(PairError) -> any MacPairingSession {
+        try await client.start(with: hub.endpoint, hubTag: hub.tag, code: code, me: me)
     }
 }
 
@@ -34,8 +46,8 @@ enum PairingText {
         case .tooManyTries: String(localized: "Too many tries. Get a new code on your Mac.")
         case .hubFull: String(localized: "This Mac already has 4 devices. Remove one on the Mac first.")
         case .notReachable: String(localized: "Can't reach your Mac. Check that both are on the same Wi-Fi.")
-        case .refused: String(localized: "Your Mac didn't accept this iPhone. Get a new code and try again.")
-        case .timedOut: String(localized: "Your Mac didn't answer in time. Try again.")
+        case .refused: String(localized: "Pairing was cancelled on the Mac. Get a new code and try again.")
+        case .timedOut: String(localized: "The numbers weren't confirmed in time. Get a new code on your Mac and try again.")
         }
     }
 
@@ -55,8 +67,11 @@ enum PairingText {
         case explain
         /// R3: pick the Mac and type the code.
         case choose
-        /// After the code: spinner and Cancel; the confirmation number once the pairer has one.
-        case waitingForMac(confirmation: String?)
+        /// After the code: spinner and Cancel until the confirmation number is known.
+        case connecting
+        /// R6a, R6b: "Does your Mac show this number?" with They match and Cancel.
+        /// `confirmedHere` once the owner tapped They match on the iPhone (then: waiting for the Mac).
+        case compare(number: String, confirmedHere: Bool)
         case connected(macName: String)
     }
 
@@ -79,6 +94,7 @@ enum PairingText {
     @ObservationIgnored private let save: (HubPairing) async throws -> Void
     @ObservationIgnored private var browseTask: Task<Void, Never>?
     @ObservationIgnored private var pairTask: Task<Void, Never>?
+    @ObservationIgnored private var session: (any MacPairingSession)?
     @ObservationIgnored private var attempt = 0
 
     init(browse: @escaping @Sendable () -> AsyncThrowingStream<[DiscoveredHub], any Error>,
@@ -137,13 +153,16 @@ enum PairingText {
         let current = attempt
         let code = code
         let pairer = pairer
-        step = .waitingForMac(confirmation: nil)
+        step = .connecting
         pairTask = Task { [weak self] in
             do {
-                let pairing = try await pairer.pair(hub: hub, code: code, me: me) { number in
-                    Task { @MainActor in self?.showConfirmation(number, attempt: current) }
-                }
-                guard let self, current == self.attempt else { return }  // cancelled meanwhile
+                let session = try await pairer.start(hub: hub, code: code, me: me)
+                guard let self, current == self.attempt else { session.cancel(); return }  // cancelled meanwhile
+                self.session = session
+                self.step = .compare(number: session.confirmationCode, confirmedHere: false)
+                let pairing = try await session.finish()
+                guard current == self.attempt else { return }
+                self.session = nil
                 try await self.save(pairing)
                 self.browseTask?.cancel()
                 self.step = .connected(macName: pairing.hubName)
@@ -155,21 +174,30 @@ enum PairingText {
         }
     }
 
-    /// Cancel while waiting: back to the code; a late answer is ignored.
+    /// R6b: They match on the iPhone. The pairing is saved only once the Mac agrees too.
+    func confirmMatch() {
+        guard case .compare(let number, false) = step, let session else { return }
+        session.confirmLocally()
+        step = .compare(number: number, confirmedHere: true)
+    }
+
+    /// Cancel while connecting or comparing: back to the code; nothing is saved and a late
+    /// answer is ignored.
     func cancelWaiting() {
-        guard case .waitingForMac = step else { return }
+        switch step {
+        case .connecting, .compare: break
+        default: return
+        }
         attempt += 1
+        session?.cancel()
+        session = nil
         pairTask?.cancel()
         step = .choose
     }
 
-    private func showConfirmation(_ number: String, attempt current: Int) {
-        guard current == attempt, case .waitingForMac = step else { return }
-        step = .waitingForMac(confirmation: number)
-    }
-
     private func fail(_ text: String, attempt current: Int) {
         guard current == attempt else { return }
+        session = nil
         errorText = text
         step = .choose
     }

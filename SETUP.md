@@ -56,9 +56,13 @@ The Mac is the hub on your home Wi-Fi (owner decision M). Pair once:
 1. **On the Mac:** click the Levels menu-bar item → ⋯ → Settings… → iPhone → **Pair iPhone…**. A 6-digit code shows for 2 minutes.
 2. **On the iPhone:** open Levels → ⚙ Settings → Mac → **Connect to your Mac** (or tap **Connect** on the card at the top of the list), then **Continue**.
 3. **Allow Local Network** when the iPhone asks ("Levels would like to find and connect to devices on your local network"). If you tapped Don't Allow: Settings → Privacy & Security → Local Network → Levels on.
-4. **On the iPhone:** pick "Levels-…" (your Mac), type the 6-digit code from the Mac and tap **Connect**. It says "Connected to <your Mac>".
+4. **On the iPhone:** pick "Levels-…" (your Mac), type the 6-digit code from the Mac and tap **Connect**.
 5. **On the Mac:** if macOS asks whether Levels may accept incoming network connections, click **Allow**.
-6. The iPhone and the Mac must be on the same Wi-Fi, with the Mac awake. Away from home the iPhone shows "Away from your Mac" and the last levels it got.
+6. **Compare the numbers.** Both screens now show a 6-digit confirmation number. The iPhone asks "Does your Mac show this number?"; the Mac asks "Does <your iPhone> show this number?".
+   - Same number: tap **They match** on the iPhone and click **They match** on the Mac (either first). The iPhone says "Connected to <your Mac>"; the Mac says "Paired with <your iPhone>".
+   - Different numbers: tap **Cancel** on either screen. Someone else may be trying to connect; nothing is saved. Get a new code and try again.
+   - You have up to 2 minutes; after that, get a new code.
+7. The iPhone and the Mac must be on the same Wi-Fi, with the Mac awake. Away from home the iPhone shows "Away from your Mac" and the last levels it got.
 
 To undo: iPhone Settings → Mac → **Forget this Mac**; Mac Settings → iPhone → Remove.
 

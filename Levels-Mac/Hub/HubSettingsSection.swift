@@ -81,7 +81,8 @@ struct HubSettingsSection: View {
     }
 }
 
-/// NET-002 R1, R2, R7: the code, the hub name, a countdown, and the outcome.
+/// NET-002 R1, R2, R6a, R7: the code, the hub name, a countdown, the confirmation number
+/// to compare, and the outcome.
 struct PairingSheet: View {
     let hub: HubServer
     @Environment(\.dismiss) private var dismiss
@@ -94,6 +95,11 @@ struct PairingSheet: View {
                 Spacer()
                 Button(isDone ? "Done" : "Cancel") { dismiss() }
                     .keyboardShortcut(isDone ? .defaultAction : .cancelAction)
+                if isConfirming {
+                    // Call 30: the device gets its key only after this tap.
+                    Button("They match") { hub.approvePairing() }
+                        .keyboardShortcut(.defaultAction)
+                }
             }
         }
         .padding(20)
@@ -104,6 +110,11 @@ struct PairingSheet: View {
 
     private var isDone: Bool {
         if case .paired = hub.pairingState { return true }
+        return false
+    }
+
+    private var isConfirming: Bool {
+        if case .confirming = hub.pairingState { return true }
         return false
     }
 
@@ -125,6 +136,18 @@ struct PairingSheet: View {
             if failures > 0 {
                 Text(failures == 1 ? "1 wrong try" : "\(failures) wrong tries").font(.caption).foregroundStyle(.orange)
             }
+        case .confirming(let name, let confirmationCode, _):
+            Text("Does \(name) show this number?")
+                .multilineTextAlignment(.center).font(.callout)
+            Text(PairingCrypto.displayCode(confirmationCode))
+                .font(.system(size: 40, weight: .semibold, design: .monospaced))
+                .accessibilityLabel(confirmationCode.map(String.init).joined(separator: " "))
+            Text("Tap They match only if both screens show the same number. If they differ, tap Cancel: someone else may be trying to connect.")
+                .multilineTextAlignment(.center).font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        case .matched(let name):
+            ProgressView()
+            Text("Finishing pairing with \(name)…").font(.callout)
         case .locked:
             Text("Too many tries. Get a new code.")
             Button("New Code") { hub.openPairing() }

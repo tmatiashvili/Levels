@@ -30,7 +30,7 @@ struct ConnectMacCard: View {
     }
 }
 
-/// R2, R3 and the wait for the Mac (confirmation number seam, see ``MacPairer``).
+/// R2, R3 and the two-sided number comparison (NET-002 R6a, R6b; see ``MacPairer``).
 struct ConnectMacFlowView: View {
     @State var flow: ConnectMacFlowModel
     @Environment(\.dismiss) private var dismiss
@@ -78,22 +78,41 @@ struct ConnectMacFlowView: View {
             .frame(maxHeight: .infinity)
         case .choose:
             chooseForm
-        case .waitingForMac(let confirmation):
+        case .connecting:
             VStack(spacing: 16) {
                 ProgressView()
-                if let confirmation {
-                    Text("Check that your Mac shows the same number:")
-                        .multilineTextAlignment(.center)
-                    Text(PairingText.grouped(confirmation))
-                        .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
-                        .accessibilityLabel(Text(confirmation.map(String.init).joined(separator: " ")))
-                    Text("Then tap They match on your Mac.")
-                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                } else {
-                    Text("Connecting to your Mac…").foregroundStyle(.secondary)
-                }
+                Text("Connecting to your Mac…").foregroundStyle(.secondary)
                 Button("Cancel", role: .cancel) { flow.cancelWaiting() }
                     .buttonStyle(.bordered)
+            }
+            .padding()
+            .frame(maxHeight: .infinity)
+        case .compare(let number, let confirmedHere):
+            // NET-002 R6a, R6b: the owner compares on BOTH screens; the iPhone never trusts the Mac alone.
+            VStack(spacing: 16) {
+                Text("Does your Mac show this number?")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                Text(PairingText.grouped(number))
+                    .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
+                    .accessibilityLabel(Text(number.map(String.init).joined(separator: " ")))
+                if confirmedHere {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Now click They match on your Mac.").foregroundStyle(.secondary)
+                    }
+                    Button("Cancel", role: .cancel) { flow.cancelWaiting() }
+                        .buttonStyle(.bordered)
+                } else {
+                    Text("If the numbers are different, tap Cancel. Click They match on your Mac too.")
+                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    HStack(spacing: 12) {
+                        Button("Cancel", role: .cancel) { flow.cancelWaiting() }
+                            .buttonStyle(.bordered)
+                        Button("They match") { flow.confirmMatch() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
             }
             .padding()
             .frame(maxHeight: .infinity)

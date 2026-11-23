@@ -41,7 +41,7 @@ Assumptions:
 ## Decision
 
 1. **Where data lives.** Battery data lives only in (a) the user's CloudKit private database, (b) the App Group cache on each device (ADR-0009), and (c) the device ID in the Keychain (ADR-0007). Nothing goes to any other server.
-   - Note (owner decision M, 2026-11-24): in the free-team hub build there is no CloudKit. Data travels only between the owner's paired devices on the local network, encrypted with TLS-PSK, and the pairing keys live in each device's Keychain (ADR-0020). No server is involved. The Bonjour name names no one.
+   - Note (owner decision M, 2026-11-24): in the free-team hub build there is no CloudKit. Data travels only between the owner's paired devices on the local network, encrypted with TLS-PSK, and the pairing keys live in each device's Keychain (ADR-0020). No server is involved. The Bonjour name names no one. Pairing keys come from an X25519 key agreement confirmed by the owner comparing a 6-digit number on both screens (lead's call 30), so a guessed or recorded pairing code doesn't expose them.
 2. **No third-party code.** No third-party SDKs, analytics, crash reporters or ad libraries. Swift packages from Apple only. Crash data comes from Apple's opt-in diagnostics (Xcode Organizer) only.
 3. **Collect the minimum.** Store only the fields in ADR-0005. No location, no Wi-Fi/network names, no serial numbers, no hardware identifiers. Device names are shown to the user and synced; they are never logged with `privacy: .public` in `os_log`/`Logger` (log names as private).
 4. **Privacy manifest in every target** (`Levels-iOS`, `Levels-Watch`, `Widgets-iOS`, `Widgets-Watch`, and `Levels-Mac`/`Widgets-Mac` for consistency even though macOS doesn't require reasons):

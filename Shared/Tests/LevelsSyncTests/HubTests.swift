@@ -128,8 +128,21 @@ struct HubLoopbackTests {
     func pair(_ mac: Mac, port: UInt16, id: DeviceID = hubPhoneID) async throws(PairError) -> HubPairing {
         let code = mac.window.open(hub: mac.info)
         await mac.listener.reload()
-        return try await PairingClient().pair(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag,
-                                              code: code, me: PairRequestIdentity(deviceID: id, name: "My iPhone", kind: .iphone))
+        return try await pair(mac, port: port, code: code, id: id)
+    }
+
+    /// The iPhone's side with an existing code; the "owner" taps They match on the Mac once
+    /// it shows the same number as the iPhone, and on the iPhone (NET-002 R6a, R6b; call 30).
+    func pair(_ mac: Mac, port: UInt16, code: String, id: DeviceID = hubPhoneID, name: String = "My iPhone") async throws(PairError) -> HubPairing {
+        let session = try await PairingClient().start(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag,
+                                                      code: code, me: PairRequestIdentity(deviceID: id, name: name, kind: .iphone))
+        await waitFor {
+            if case .confirming(_, let shown, _) = mac.window.state { return shown == session.confirmationCode }
+            return false
+        }
+        #expect(mac.window.approve())
+        session.confirmLocally()
+        return try await session.finish()
     }
 
     @Test func fullFlow() async throws {
@@ -205,8 +218,8 @@ struct HubLoopbackTests {
         await mac.listener.reload()
         let wrong = code == "111111" ? "222222" : "111111"
         await #expect(throws: PairError.wrongCode) {
-            try await PairingClient().pair(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag, code: wrong,
-                                           me: PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone))
+            try await PairingClient().start(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag, code: wrong,
+                                            me: PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone))
         }
         await waitFor {
             if case .open(_, _, 1) = mac.window.state { return true }
@@ -214,8 +227,7 @@ struct HubLoopbackTests {
         }
         #expect(mac.store.all().isEmpty)
 
-        let pairing = try await PairingClient().pair(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag,
-                                                     code: code, me: PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone))
+        let pairing = try await pair(mac, port: port, code: code)
         let phoneStore = InMemoryClientPairingStore(pairing)
         let client = HubClient(transport: NWHubTransport(locator: FixedHubLocator(loopbackPort: port)), pairing: phoneStore, me: hubPhoneID)
         #expect(await client.forget())  // DELETE /v1/pairing
@@ -230,14 +242,153 @@ struct HubLoopbackTests {
         let port = try await mac.listener.start()
         let code = mac.window.open(hub: mac.info)
         await mac.listener.reload()
-        let me = PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone)
-        _ = try await PairingClient().pair(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag, code: code, me: me)
+        _ = try await pair(mac, port: port, code: code)
         // Single use: the same code no longer handshakes (NET-002 R2, edge "two iPhones").
         try await Task.sleep(for: .milliseconds(100))
         await #expect(throws: PairError.wrongCode) {
-            try await PairingClient().pair(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag, code: code,
-                                           me: PairRequestIdentity(deviceID: strangerID, name: "Other", kind: .iphone))
+            try await PairingClient().start(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag, code: code,
+                                            me: PairRequestIdentity(deviceID: strangerID, name: "Other", kind: .iphone))
         }
         await mac.listener.stop()
+    }
+
+    /// Call 30: the numbers differ (or the owner is unsure) and the owner taps Cancel.
+    /// The iPhone gets `.refused`, nothing is stored, and the code is spent.
+    @Test func cancelOnTheMacRefusesThePairing() async throws {
+        let mac = Mac()
+        await mac.report(level: 60)
+        let port = try await mac.listener.start()
+        let code = mac.window.open(hub: mac.info)
+        await mac.listener.reload()
+        let shown = Mutex<String?>(nil)
+        let attempt = Task { () async -> Result<HubPairing, PairError> in
+            do throws(PairError) {
+                return .success(try await PairingClient().pair(
+                    with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag, code: code,
+                    me: PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone),
+                    confirm: { c in
+                        shown.withLock { $0 = c }
+                        try? await Task.sleep(for: .seconds(30))  // the iPhone owner hasn't answered
+                        return true
+                    }))
+            } catch { return .failure(error) }
+        }
+        await waitFor {
+            if case .confirming(_, let sas, _) = mac.window.state { return sas == shown.withLock({ $0 }) }
+            return false
+        }
+        mac.window.close()  // the sheet's Cancel
+        #expect(await attempt.value.failure == .refused)
+        #expect(mac.store.all().isEmpty)
+        #expect(mac.window.codeKey == nil && mac.window.state == .closed)
+        await mac.listener.stop()
+    }
+
+    /// Call 30: the iPhone gives up (Cancel on the iPhone) while the Mac shows the number.
+    @Test func cancelOnTheIPhoneStopsWaiting() async throws {
+        let mac = Mac()
+        await mac.report(level: 60)
+        let port = try await mac.listener.start()
+        let code = mac.window.open(hub: mac.info)
+        await mac.listener.reload()
+        let session = try await PairingClient().start(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag,
+                                                      code: code, me: PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone))
+        let finishing = Task { () async -> Result<HubPairing, PairError> in
+            do throws(PairError) { return .success(try await session.finish()) } catch { return .failure(error) }
+        }
+        await waitFor {
+            if case .confirming = mac.window.state { return true }
+            return false
+        }
+        session.cancel()
+        #expect(await finishing.value.failure != nil)
+        #expect(mac.store.all().isEmpty)
+        await mac.listener.stop()
+    }
+
+    /// R6b: the Mac's 204 alone is not enough; nothing is returned (so nothing can be saved)
+    /// and the new key is not used until the iPhone's owner taps They match too.
+    @Test func R6b_macApprovalAloneDoesNotPair() async throws {
+        let mac = Mac()
+        await mac.report(level: 60)
+        let port = try await mac.listener.start()
+        let code = mac.window.open(hub: mac.info)
+        await mac.listener.reload()
+        let session = try await PairingClient().start(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag,
+                                                      code: code, me: PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone))
+        let done = Mutex(false)
+        let finishing = Task { () async -> Result<HubPairing, PairError> in
+            defer { done.withLock { $0 = true } }
+            do throws(PairError) { return .success(try await session.finish()) } catch { return .failure(error) }
+        }
+        await waitFor {
+            if case .confirming = mac.window.state { return true }
+            return false
+        }
+        #expect(mac.window.approve())
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(!done.withLock { $0 })        // still waiting for the iPhone's tap
+        #expect(mac.store.all().isEmpty)        // R7 (first request with the new key) not sent
+        session.confirmLocally()
+        let pairing = try await finishing.value.get()
+        #expect(mac.store.key(for: hubPhoneID).map { $0.withUnsafeBytes { Data($0) } } == pairing.key)
+        await mac.listener.stop()
+    }
+
+    /// R6b: Cancel on the iPhone after the Mac's 204 still refuses; the Mac never gets R7.
+    @Test func R6b_cancelOnTheIPhoneAfterMacApprovalSavesNothing() async throws {
+        let mac = Mac()
+        await mac.report(level: 60)
+        let port = try await mac.listener.start()
+        let code = mac.window.open(hub: mac.info)
+        await mac.listener.reload()
+        let session = try await PairingClient().start(with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag,
+                                                      code: code, me: PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone))
+        let finishing = Task { () async -> Result<HubPairing, PairError> in
+            do throws(PairError) { return .success(try await session.finish()) } catch { return .failure(error) }
+        }
+        await waitFor {
+            if case .confirming = mac.window.state { return true }
+            return false
+        }
+        #expect(mac.window.approve())
+        try await Task.sleep(for: .milliseconds(300))
+        session.cancel()
+        #expect(await finishing.value.failure == .refused)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(mac.store.all().isEmpty)
+        await mac.listener.stop()
+    }
+
+    /// R6b: the iPhone's They match first, then the Mac's: either order pairs.
+    @Test func R6b_iPhoneFirstThenMacPairs() async throws {
+        let mac = Mac()
+        await mac.report(level: 60)
+        let port = try await mac.listener.start()
+        let code = mac.window.open(hub: mac.info)
+        await mac.listener.reload()
+        let pairing = try await PairingClient().pair(
+            with: FixedHubLocator(loopbackPort: port).endpoint, hubTag: mac.info.tag, code: code,
+            me: PairRequestIdentity(deviceID: hubPhoneID, name: "My iPhone", kind: .iphone),
+            confirm: { _ in
+                Task {
+                    await waitFor {
+                        if case .confirming = mac.window.state { return true }
+                        return false
+                    }
+                    try? await Task.sleep(for: .milliseconds(200))
+                    _ = mac.window.approve()
+                }
+                return true
+            })
+        #expect(mac.store.key(for: hubPhoneID).map { $0.withUnsafeBytes { Data($0) } } == pairing.key)
+        await mac.listener.stop()
+    }
+}
+
+private extension Result {
+    var failure: Failure? {
+        if case .failure(let e) = self { return e }
+        return nil
     }
 }
