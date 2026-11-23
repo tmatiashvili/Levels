@@ -46,7 +46,7 @@ struct DeviceWindowView: View {
     var body: some View {
         let ideal = Self.idealSize(rows: model.store.rows.count)
         DevicesPanel(highlighted: model.highlighted)
-            .frame(minWidth: Self.minSize.width, idealWidth: ideal.width,
+            .frame(minWidth: Self.minSize.width, idealWidth: ideal.width, maxWidth: 560,
                    minHeight: Self.minSize.height, idealHeight: ideal.height)
             .onOpenURL { url in
                 _ = model.handle(url)

@@ -63,18 +63,36 @@ struct LevelsWidgetKitTests {
     @Test func AC3_tenDevicesShowEightRowsAndTwoMoreInListOrder() {
         let devices = (1...10).map { d($0, $0 == 1 ? .mac : .iphone, "D\($0)", 100 - $0 * 5) }
         let e = entry(devices)
-        let list = e.largeList
+        let list = e.largeList(excludingThisDevice: false)
         #expect(list.shown.count == 8)
         #expect(list.moreCount == 2)
         #expect(list.shown.map(\.id) == Array(e.rows.prefix(8)).map(\.id))
         #expect(list.shown.first?.isThisDevice == true)  // UI-001 order: this device first
     }
 
+    @Test func macLargeAndMediumLeaveThisMacOut() {
+        let devices = (1...10).map { d($0, $0 == 1 ? .mac : .iphone, "D\($0)", 100 - $0 * 5) }
+        let e = entry(devices)
+        let large = e.largeList(excludingThisDevice: true)
+        #expect(large.shown.count == 8 && large.moreCount == 1)
+        #expect(!large.shown.contains { $0.isThisDevice })
+        #expect(large.shown.map(\.id) == Array(e.rows.filter { !$0.isThisDevice }.prefix(8)).map(\.id))
+        let medium = e.mediumRows(excludingThisDevice: true)
+        #expect(medium.count == 4 && !medium.contains { $0.isThisDevice })
+        #expect(e.mediumRows(excludingThisDevice: false).first?.isThisDevice == true)
+    }
+
+    @Test func macListKeepsThisMacWhenAlone() {
+        let e = entry([d(1, .mac, "Mac", 66)])
+        #expect(e.largeList(excludingThisDevice: true).shown.map(\.name) == ["Mac"])
+        #expect(e.mediumRows(excludingThisDevice: true).map(\.name) == ["Mac"])
+    }
+
     @Test func largeShowsAllWhenEightOrFewer() {
         let e = entry((1...8).map { d($0, .iphone, "D\($0)", 50) })
-        #expect(e.largeList.shown.count == 8 && e.largeList.moreCount == 0)
+        #expect(e.largeList(excludingThisDevice: false).shown.count == 8 && e.largeList(excludingThisDevice: false).moreCount == 0)
         let one = entry([d(1, .mac, "Mac", 66)])
-        #expect(one.largeList.shown.count == 1 && one.largeList.moreCount == 0)
+        #expect(one.largeList(excludingThisDevice: false).shown.count == 1 && one.largeList(excludingThisDevice: false).moreCount == 0)
         #expect(one.isOnlyThisDevice)
     }
 
@@ -82,7 +100,7 @@ struct LevelsWidgetKitTests {
         let e = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: [
             d(1, .mac, "Mac", nil), d(2, .iphone, "iPhone", 40, age: 5 * 3600), d(3, .watch, "Watch", 30)]),
             preferences: DisplayPreferences(hidden: [id(3)]))
-        let shown = e.largeList.shown
+        let shown = e.largeList(excludingThisDevice: false).shown
         #expect(shown.map(\.name) == ["Mac", "iPhone"])
         #expect(shown[1].freshness(at: now) == .stale)
         #expect(!e.isOnlyThisDevice)
@@ -90,8 +108,8 @@ struct LevelsWidgetKitTests {
 
     @Test func largeListEmptyWithoutCache() {
         let e = DeviceEntry(date: now, snapshot: nil, preferences: DisplayPreferences())
-        #expect(e.largeList == LargeList(rows: []))
-        #expect(e.largeList.moreCount == 0)
+        #expect(e.largeList(excludingThisDevice: true) == LargeList(rows: []))
+        #expect(e.largeList(excludingThisDevice: false).moreCount == 0)
     }
 
     @Test func macOffersLargeFamily() {

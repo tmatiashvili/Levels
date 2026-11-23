@@ -31,6 +31,7 @@ struct LevelsMacApp: App {
         // Sized to its content like the popover (UI-004 R6): the first open uses the view's
         // ideal size; after that SwiftUI restores the size the user left it at. Resizable,
         // never smaller than the content's minimum.
+        .defaultSize(width: 380, height: 460)  // fallback if the placement below can't measure
         .windowResizability(.contentMinSize)
         .defaultWindowPlacement { content, _ in
             WindowPlacement(size: content.sizeThatFits(.unspecified))

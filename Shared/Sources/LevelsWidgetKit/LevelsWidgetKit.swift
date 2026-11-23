@@ -40,8 +40,23 @@ public struct DeviceEntry: TimelineEntry, Sendable {
         return lowest(excludingThisDevice: excludingThisDevice) ?? rows.first
     }
 
+    /// Rows for the list families. On the Mac this Mac is left out (macOS shows its battery
+    /// already, UI-004 R1/R12) unless it is the only device.
+    public func listRows(excludingThisDevice: Bool) -> [DeviceRowModel] {
+        guard excludingThisDevice else { return rows }
+        let others = rows.filter { !$0.isThisDevice }
+        return others.isEmpty ? rows : others
+    }
+
     /// `systemLarge` content (UI-003 R3, R4, R8).
-    public var largeList: LargeList { LargeList(rows: rows) }
+    public func largeList(excludingThisDevice: Bool) -> LargeList {
+        LargeList(rows: listRows(excludingThisDevice: excludingThisDevice))
+    }
+
+    /// `systemMedium` content: up to 4 rows (UI-003 R3).
+    public func mediumRows(excludingThisDevice: Bool) -> [DeviceRowModel] {
+        Array(listRows(excludingThisDevice: excludingThisDevice).prefix(4))
+    }
 
     /// True when the only shown device is this one (UI-003 R8 "Other devices appear…").
     public var isOnlyThisDevice: Bool { rows.count == 1 && rows[0].isThisDevice }
@@ -177,10 +192,10 @@ public struct DevicesWidgetView: View {
         } else {
             switch family {
             case .systemMedium:
-                MediumDevicesView(entry: entry)
+                MediumDevicesView(entry: entry, excludesThisDevice: excludesThisDeviceFromLowest)
             #if !os(watchOS)
             case .systemLarge:
-                LargeDevicesView(entry: entry)
+                LargeDevicesView(entry: entry, excludesThisDevice: excludesThisDeviceFromLowest)
             #endif
             default:
                 SmallDeviceView(entry: entry, excludesThisDevice: excludesThisDeviceFromLowest)
@@ -239,9 +254,11 @@ struct SmallDeviceView: View {
 /// shown reading (UI-003 R3). Each item is a `Link` to its device (UI-003 R7).
 struct MediumDevicesView: View {
     let entry: DeviceEntry
+    /// The Mac leaves itself out (UI-004 R12), so it doesn't use one of the 4 slots.
+    let excludesThisDevice: Bool
 
     var body: some View {
-        let shown = Array(entry.rows.prefix(4))
+        let shown = entry.mediumRows(excludingThisDevice: excludesThisDevice)
         let oldest = shown.map { $0.readingDate(now: entry.date) }.min() ?? entry.date
         VStack(spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
@@ -255,6 +272,7 @@ struct MediumDevicesView: View {
                         .frame(maxWidth: .infinity)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(RowText.accessibilityLabel(for: row, now: entry.date))
+                        .foregroundStyle(.primary)  // accented mode must not tint links blue
                     }
                 }
             }
@@ -272,11 +290,16 @@ struct MediumDevicesView: View {
 /// when cut (UI-003 R3, R4). Each row is a `Link` to its device (UI-003 R7, UI-004 R14).
 public struct LargeDevicesView: View {
     let entry: DeviceEntry
+    /// The Mac leaves itself out (UI-004 R12) unless it is the only device.
+    let excludesThisDevice: Bool
 
-    public init(entry: DeviceEntry) { self.entry = entry }
+    public init(entry: DeviceEntry, excludesThisDevice: Bool) {
+        self.entry = entry
+        self.excludesThisDevice = excludesThisDevice
+    }
 
     public var body: some View {
-        let list = entry.largeList
+        let list = entry.largeList(excludingThisDevice: excludesThisDevice)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 Text("Battery Levels").font(.caption.weight(.semibold))
@@ -290,6 +313,7 @@ public struct LargeDevicesView: View {
             ForEach(list.shown) { row in
                 Link(destination: LevelsAppConfig.deviceURL(row.id)) {
                     LargeDeviceRow(row: row, now: entry.date)
+                        .foregroundStyle(.primary)  // accented mode must not tint links blue
                 }
                 if row.id != list.shown.last?.id { Divider() }
             }
@@ -341,6 +365,29 @@ struct LargeDeviceRow: View {
     }
 }
 
+/// A ring drawn at any size, with no label of its own: the percentage is shown once, by the
+/// caller. (`BatteryRing`'s `.accessoryCircularCapacity` gauge has a fixed size and its own label.)
+struct WidgetRing: View {
+    let level: Int
+    let isCharging: Bool
+    let isLow: Bool
+
+    var body: some View {
+        let width = 5.0
+        ZStack {
+            Circle().stroke(.quaternary, lineWidth: width)
+            Circle()
+                .trim(from: 0, to: CGFloat(min(max(level, 0), 100)) / 100)
+                .stroke(isCharging ? Color.green : isLow ? Color.red : Color.primary,
+                        style: StrokeStyle(lineWidth: width, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .widgetAccentable()
+        }
+        .padding(width / 2)
+        .accessibilityHidden(true)
+    }
+}
+
 /// Horizontal capacity bar for `systemLarge` rows; the fill is accentable (UI-003 R9).
 struct LevelBar: View {
     let level: Int
@@ -370,7 +417,7 @@ struct WidgetLevel: View {
         let stale = row.freshness(at: now) == .stale
         if let level = row.level {
             ZStack {
-                BatteryRing(level: level, isCharging: row.showsChargingBolt(at: now), isLow: row.isLow)
+                WidgetRing(level: level, isCharging: row.showsChargingBolt(at: now), isLow: row.isLow)
                     .frame(width: ringSize, height: ringSize)
                 VStack(spacing: 0) {
                     Text(RowText.percent(level)).font(font).monospacedDigit().minimumScaleFactor(0.6)
