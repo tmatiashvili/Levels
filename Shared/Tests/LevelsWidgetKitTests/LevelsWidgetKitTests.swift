@@ -82,6 +82,11 @@ struct LevelsWidgetKitTests {
         #expect(e.mediumRows(excludingThisDevice: false).first?.isThisDevice == true)
     }
 
+    @Test func mediumKeepsFullNames() {
+        let e = entry([d(1, .mac, "Mac", 66), d(2, .watch, "Apple Watch", 40), d(3, .ipad, "Nino's iPad Pro", 30)])
+        #expect(e.mediumRows(excludingThisDevice: true).map(\.name) == ["Nino's iPad Pro", "Apple Watch"])
+    }
+
     @Test func macListKeepsThisMacWhenAlone() {
         let e = entry([d(1, .mac, "Mac", 66)])
         #expect(e.largeList(excludingThisDevice: true).shown.map(\.name) == ["Mac"])

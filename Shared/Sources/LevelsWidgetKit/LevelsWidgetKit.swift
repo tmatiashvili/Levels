@@ -267,7 +267,8 @@ struct MediumDevicesView: View {
                         VStack(spacing: 4) {
                             DeviceSymbol(row: row).widgetAccentable()
                             WidgetLevel(row: row, now: entry.date, ringSize: 44, font: .caption.weight(.semibold))
-                            Text(Self.shortName(row.name)).font(.caption2).lineLimit(1)
+                            Text(row.name).font(.caption2)  // full name; tail-truncated if it won't fit
+                                .lineLimit(1).truncationMode(.tail).minimumScaleFactor(0.8)
                         }
                         .frame(maxWidth: .infinity)
                         .accessibilityElement(children: .ignore)
@@ -278,11 +279,6 @@ struct MediumDevicesView: View {
             }
             AgeLine(date: oldest, stale: shown.contains { $0.freshness(at: entry.date) == .stale })
         }
-    }
-
-    /// Builder's call (UI-003 Design): the first word of the name.
-    static func shortName(_ name: String) -> String {
-        name.split(separator: " ").first.map(String.init) ?? name
     }
 }
 
