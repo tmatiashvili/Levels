@@ -97,10 +97,21 @@ import os
         guard let snapshot = try? await source.current() else { return }
         let now = Date()
         let subjects = LowBatteryAlertRule.subjects(in: snapshot, hidden: preferences.load().hidden, now: now)
+        if !source.isReportingEnabled { forgetDevices() }  // R11
         let result = LowBatteryAlertRule.evaluate(subjects, settings: settings, state: store.loadState(),
                                                   reportingEnabled: source.isReportingEnabled, now: now)
         store.saveState(result.state)
         for alert in result.alerts { await post(alert) }
+    }
+
+    /// R11 (ADR-0019): after Remove all my data no device names stay behind in Notification
+    /// Center or in the per-device switches.
+    private func forgetDevices() {
+        center.removeAllDeliveredNotifications()
+        guard !settings.mutedDevices.isEmpty else { return }
+        settings.forgetDevices()
+        store.saveSettings(settings)
+        Self.logger.notice("Reporting off: cleared delivered alerts and per-device switches")
     }
 
     private func requestAuthorizationIfNeeded() async {

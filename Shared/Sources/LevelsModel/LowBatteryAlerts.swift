@@ -34,6 +34,9 @@ public struct AlertSettings: Codable, Sendable, Equatable {
         }
     }
 
+    /// R11: Remove all my data forgets the per-device switches (they name devices, ADR-0019).
+    public mutating func forgetDevices() { mutedDevices = [] }
+
     /// The settings a device of `kind` starts with.
     public static func defaults(for kind: DeviceKind) -> AlertSettings {
         AlertSettings(isEnabled: defaultEnabled(for: kind))
@@ -77,8 +80,11 @@ public struct AlertSubject: Sendable, Equatable {
     public var level: Int?
     public var isCharging: Bool
     public var readingDate: Date
+    /// Hidden on this device (UI-001 R2): tracked for re-arming, never posted (R2).
+    public var isHidden: Bool
 
-    public init(key: String, rowID: DeviceID, name: String, part: Part, level: Int?, isCharging: Bool, readingDate: Date) {
+    public init(key: String, rowID: DeviceID, name: String, part: Part, level: Int?, isCharging: Bool, readingDate: Date,
+                isHidden: Bool = false) {
         self.key = key
         self.rowID = rowID
         self.name = name
@@ -86,6 +92,7 @@ public struct AlertSubject: Sendable, Equatable {
         self.level = level
         self.isCharging = isCharging
         self.readingDate = readingDate
+        self.isHidden = isHidden
     }
 }
 
@@ -111,31 +118,38 @@ public struct LowBatteryAlert: Sendable, Equatable {
 
 /// The ALR-001 decision rule.
 public enum LowBatteryAlertRule {
-    /// R2, R3: the subjects in a snapshot. Leaves out this device and hidden devices.
+    /// R2, R3: the subjects in a snapshot. Leaves out this device; hidden devices are kept
+    /// with `isHidden` set, so their state isn't pruned (hide → unhide must not repeat an alert).
     public static func subjects(in snapshot: SnapshotFile, hidden: Set<DeviceID> = [], now: Date) -> [AlertSubject] {
         let preferences = DisplayPreferences(hidden: hidden)
         var result: [AlertSubject] = []
         var groups: [UUID: [DeviceBattery]] = [:]
-        for d in snapshot.devices where d.id != snapshot.ownDeviceID && !DeviceOrdering.isHidden(d, in: preferences) {
+        for d in snapshot.devices where d.id != snapshot.ownDeviceID {
             if let info = d.accessory, info.component != .main {
                 groups[info.groupID, default: []].append(d)
             } else {
                 result.append(AlertSubject(key: d.id.recordName, rowID: d.id, name: d.name, part: .whole,
-                                           level: d.level, isCharging: d.isCharging, readingDate: d.readingDate(now: now)))
+                                           level: d.level, isCharging: d.isCharging, readingDate: d.readingDate(now: now),
+                                           isHidden: DeviceOrdering.isHidden(d, in: preferences)))
             }
         }
         for (groupID, members) in groups.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
             let rowID = DeviceID(groupID)
+            let hidden = members.contains { DeviceOrdering.isHidden($0, in: preferences) }
             let name = groupName(members)
             let buds = members.filter { $0.accessory?.component == .left || $0.accessory?.component == .right }
-            if let lowest = lowest(buds) {
+            // R3: only buds read in the last hour count, so a bud disconnected hours ago at 5 %
+            // (kept in the cache) neither hides the live bud nor blocks re-arming.
+            let fresh = buds.filter { now.timeIntervalSince($0.readingDate(now: now)) <= AlertSettings.maxReadingAge }
+            if let lowest = lowest(fresh.isEmpty ? buds : fresh) {
                 result.append(AlertSubject(key: "\(rowID.recordName):earbuds", rowID: rowID, name: name, part: .earbuds,
                                            level: lowest.level, isCharging: lowest.isCharging,
-                                           readingDate: lowest.readingDate(now: now)))
+                                           readingDate: lowest.readingDate(now: now), isHidden: hidden))
             }
             if let c = members.first(where: { $0.accessory?.component == .case }) {
                 result.append(AlertSubject(key: "\(rowID.recordName):case", rowID: rowID, name: name, part: .case,
-                                           level: c.level, isCharging: c.isCharging, readingDate: c.readingDate(now: now)))
+                                           level: c.level, isCharging: c.isCharging, readingDate: c.readingDate(now: now),
+                                           isHidden: hidden))
             }
         }
         return result
@@ -159,7 +173,7 @@ public enum LowBatteryAlertRule {
                 continue
             }
             guard !s.isCharging, level <= settings.threshold else { continue }  // R4
-            guard settings.isEnabled, !settings.mutedDevices.contains(s.rowID) else { continue }  // R1, R7
+            guard settings.isEnabled, !settings.mutedDevices.contains(s.rowID), !s.isHidden else { continue }  // R1, R2, R7
             disarmed.insert(s.key)
             alerts.append(LowBatteryAlert(subjectKey: s.key, rowID: s.rowID, name: s.name, part: s.part, level: level))
         }

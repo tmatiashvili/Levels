@@ -24,8 +24,8 @@ This spec is build-ready for the **Mac-first, local-only build** (owner decision
 ## Behaviour
 
 - **R1 — Defaults.** Owner decision H: alerts default **on** for Mac and iPad, off for iPhone and Watch (`AlertSettings.defaultEnabled(for:)`). On this Mac build the master switch "Low-battery alerts" is on until the user turns it off. Settings are local to the Mac (App Group `UserDefaults`, key `alertSettings`), never synced.
-- **R2 — Who alerts about whom.** Owner decision H: a device never alerts about itself. The Mac alerts about every battery in its snapshot except its own record (`ownDeviceID`); in this build that means its accessories only. Hidden devices (UI-001 R2) do not alert.
-- **R3 — Alert subjects (lead's call 18a).** A Magic device or other single-battery accessory is one subject. AirPods and other grouped accessories (MAC-003 R3a) are **two** subjects: the **earbuds** (left and right together, level = the lower bud, charging = that bud's charging) and the **case**. Not one per component, so a pair of buds draining together gives one alert, not two; not one per group, so a low case is not hidden by full buds (and is named as the case).
+- **R2 — Who alerts about whom.** Owner decision H: a device never alerts about itself. The Mac alerts about every battery in its snapshot except its own record (`ownDeviceID`); in this build that means its accessories only. Hidden devices (UI-001 R2) do not alert, but their cycle state is still tracked, so hiding and unhiding a device never repeats an alert.
+- **R3 — Alert subjects (lead's call 18a).** A Magic device or other single-battery accessory is one subject. AirPods and other grouped accessories (MAC-003 R3a) are **two** subjects: the **earbuds** (left and right together, level = the lower bud read in the last hour, charging = that bud's charging; only if no bud was read in the last hour do all buds count, which R6 then ignores) and the **case**. Not one per component, so a pair of buds draining together gives one alert, not two; not one per group, so a low case is not hidden by full buds (and is named as the case).
 - **R4 — Threshold.** One threshold for all subjects, 5–50% in steps of 5, default 20% (same as UI-001 R7's red). A subject is low when `level ≤ threshold` and it is not charging. Readings with no level never alert.
 - **R5 — One alert per discharge cycle (hysteresis).** Each subject is *armed* (may alert) or *disarmed*. An armed subject that is low posts one notification and becomes disarmed. A disarmed subject re-arms when it is seen charging, or its level is at or above `threshold + 10`. Unknown subjects start armed. State persists across relaunches (App Group `UserDefaults`, key `alertState`), so a relaunch never repeats an alert. Re-arming is tracked even while alerts or that device are switched off; only posting needs them on.
 - **R6 — Late readings.** A reading older than 1 hour (`readingDate`, SYNC-002 R8) is ignored: it neither alerts nor changes state. This keeps a disconnected accessory's last cached level from alerting at launch.
@@ -33,7 +33,7 @@ This spec is build-ready for the **Mac-first, local-only build** (owner decision
 - **R8 — Notification text.** Plain and short, body only, the app name is the header macOS shows: "<Name> is at <level>%" (e.g. "Magic Mouse is at 15%"); for the earbuds "<Name> is at <level>%" with the headset name; for the case "<Name> case is at <level>%". Default sound. Identifier `low-<subject key>`, so a new alert for the same subject replaces the old one in Notification Center.
 - **R9 — Tap.** Tapping the notification opens `levels://device/<uuid>` with the row's ID (the group ID for AirPods), which opens the device window with that row highlighted (UI-004 R14).
 - **R10 — Permission (lead's call 18b).** Levels never asks at launch. It calls `UNUserNotificationCenter.requestAuthorization([.alert, .sound])` the first time it is needed: when the user turns "Low-battery alerts" on in Settings, or, because the default is on (R1), when the first alert is due and macOS has not been asked yet; that alert is posted if the user allows. If notifications are denied, nothing is posted and Settings shows "Notifications for Levels are off in System Settings." with an "Open Notification Settings" button. The status is re-read whenever Settings appears.
-- **R11 — Reporting off.** While reporting is off (Remove all my data, SYNC-001 R15a) no alerts are posted and the alert state is cleared; Settings says "Alerts pause while reporting is off."
+- **R11 — Reporting off.** While reporting is off (Remove all my data, SYNC-001 R15a) no alerts are posted, the alert state is cleared, delivered Levels notifications are removed (`removeAllDeliveredNotifications()`) and the per-device switches are forgotten (`mutedDevices` emptied), so no device names stay behind (ADR-0019); the master switch and threshold are kept. Settings says "Alerts pause while reporting is off."
 - **R12 — Feeding.** Alerts are evaluated on every snapshot change signal (each report, refresh and cache write), on launch, and when an alert setting changes. Turning alerts on with an accessory already low alerts once for it.
 
 ## Design
@@ -78,7 +78,7 @@ Subject keys: `<recordName>` for a whole device, `<groupID>:earbuds` and `<group
 - Level jumps from 22% to 12% between scans: one alert, with the reported level.
 - Accessory charging when low: no alert; charging re-arms.
 - AirPods: buds in the case charge (re-arm earbuds); the case on its own discharges and alerts as "case".
-- One bud only connected: earbuds use that bud.
+- One bud only connected: earbuds use that bud. A bud disconnected hours ago keeps its last level in the cache; it is older than 1 hour, so it is ignored while the other bud is fresh.
 - Accessory disconnects and reconnects hours later at a lower level: the new reading is fresh, so it alerts if armed.
 - Threshold raised above a disarmed subject's level: stays disarmed until it charges or reaches the new threshold + 10.
 - Device removed from the list: its state is pruned on the next evaluation.
@@ -89,14 +89,15 @@ Subject keys: `<recordName>` for a whole device, `<groupID>:earbuds` and `<group
 
 - [ ] AC1 — Given threshold 20% and alerts on, when an accessory discharges 30 → 25 → 19 → 15 → 5 without charging, then exactly one alert is emitted, at 19% (R4, R5).
 - [ ] AC2 — Given an alert was emitted, when the accessory is seen charging (or reaches 30%) and then discharges below 20% again, then a second alert is emitted; reaching only 25% does not re-arm (R5).
-- [ ] AC3 — Given a snapshot with this Mac's own record at 5%, then no alert is about the Mac (R2); given a hidden accessory at 5%, no alert.
+- [ ] AC3 — Given a snapshot with this Mac's own record at 5%, then no alert is about the Mac (R2); given a hidden accessory at 5%, no alert; given an alert, then hide, then unhide while still low, no second alert.
+- [ ] AC4a — Given the left bud read 3 hours ago at 5% and the right bud fresh at 15%, then one earbuds alert at 15%; and after it, the right bud charging re-arms the earbuds.
 - [ ] AC4 — Given AirPods left 15%, right 18%, case 60%, then one earbuds alert at 15% and no case alert; given the case at 10% too, a separate case alert "… case is at 10%" (R3, R8).
 - [ ] AC5 — Given alerts off, or that device switched off, then no alert; a charge seen meanwhile still re-arms (R5, R7).
-- [ ] AC6 — Given reporting off, then no alerts and the state is empty (R11).
+- [ ] AC6 — Given reporting off, then no alerts and the state is empty; `forgetDevices()` empties the per-device switches and keeps the master switch and threshold (R11). Removing delivered notifications is part of AC10.
 - [ ] AC7 — Given a reading older than 1 hour at 5%, then no alert and no state change (R6).
 - [ ] AC8 — Given state saved after an alert, when evaluated again from the loaded state (relaunch), then no second alert (R5).
 - [ ] AC9 — Defaults: Mac and iPad on, iPhone and Watch off, threshold 20; thresholds outside 5–50 or off-step are clamped and rounded (R1, R4). Alert text and identifier and URL as in R8, R9.
-- [ ] AC10 — Manual: launch the Debug build with no low accessory: no permission prompt. Turn alerts off and on in Settings: macOS asks once. Deny: Settings shows the denied note. Allow, and a low accessory shows a banner; tapping it opens the device window with the row highlighted.
+- [ ] AC10 — Manual: launch the Debug build with no low accessory: no permission prompt. Turn alerts off and on in Settings: macOS asks once. Deny: Settings shows the denied note. Allow, and a low accessory shows a banner; tapping it opens the device window with the row highlighted. Remove all my data removes the banner from Notification Center.
 
 ## Tests
 

@@ -18,10 +18,10 @@ private func mouse(_ level: Int?, charging: Bool = false, at date: Date = now) -
                   level: level, isCharging: charging, updatedAt: date)
 }
 
-private func pod(_ component: AccessoryComponent, _ level: Int?, charging: Bool = false) -> DeviceBattery {
+private func pod(_ component: AccessoryComponent, _ level: Int?, charging: Bool = false, at date: Date = now) -> DeviceBattery {
     DeviceBattery(id: DeviceID.accessory(key: "AA:BB", component: component), name: "TPods", kind: .accessory,
                   accessory: AccessoryInfo(parentDeviceID: mac, kind: .airpods, groupID: podsGroup, component: component),
-                  level: level, isCharging: charging, updatedAt: now)
+                  level: level, isCharging: charging, updatedAt: date)
 }
 
 private func snapshot(_ devices: [DeviceBattery]) -> SnapshotFile {
@@ -80,6 +80,8 @@ struct LowBatteryAlertTests {
         #expect(run([[]]).alerts.isEmpty)  // the snapshot holds this Mac at 5 %
         let subjects = LowBatteryAlertRule.subjects(in: snapshot([mouse(50)]), now: now)
         #expect(subjects.map(\.rowID) == [mouseID])
+        let hidden = LowBatteryAlertRule.subjects(in: snapshot([mouse(50)]), hidden: [mouseID], now: now)
+        #expect(hidden.map(\.isHidden) == [true])
     }
 
     @Test("AC3: hidden devices don't alert, by record or by group ID")
@@ -109,6 +111,47 @@ struct LowBatteryAlertTests {
             [pod(.left, 14), pod(.right, 14), pod(.case, 8)],
         ])
         #expect(r.alerts.map(\.part) == [.earbuds, .case, .earbuds])
+    }
+
+    @Test("AC4a: a bud read hours ago doesn't hide the live bud or block re-arming")
+    func staleBudIgnored() {
+        let old = now.addingTimeInterval(-3 * hour)
+        let r = run([
+            [pod(.left, 5, at: old), pod(.right, 15)],
+            [pod(.left, 5, at: old), pod(.right, 16, charging: true)],
+            [pod(.left, 5, at: old), pod(.right, 12)],
+        ])
+        #expect(r.alerts.map(\.level) == [15, 12])
+    }
+
+    @Test("AC4a: with no fresh bud, the earbuds are too old to alert")
+    func allBudsStale() {
+        let old = now.addingTimeInterval(-3 * hour)
+        #expect(run([[pod(.left, 5, at: old), pod(.right, 6, at: old)]]).alerts.isEmpty)
+    }
+
+    @Test("AC3: hide then unhide while low doesn't repeat the alert")
+    func hideUnhide() {
+        let first = run([[mouse(15)]])
+        #expect(first.alerts.count == 1)
+        let hidden = run([[mouse(14)]], state: first.state, hidden: [mouseID])
+        #expect(hidden.alerts.isEmpty)
+        #expect(hidden.state == first.state)
+        #expect(run([[mouse(13)]], state: hidden.state).alerts.isEmpty)
+    }
+
+    @Test("AC3: a hidden device still re-arms on charging")
+    func hiddenRearms() {
+        let first = run([[mouse(15)]])
+        let charged = run([[mouse(40, charging: true)]], state: first.state, hidden: [mouseID])
+        #expect(charged.state.disarmed.isEmpty)
+    }
+
+    @Test("AC6: forgetDevices empties the per-device switches only")
+    func forgetDevices() {
+        var s = AlertSettings(isEnabled: false, threshold: 35, mutedDevices: [mouseID, DeviceID(podsGroup)])
+        s.forgetDevices()
+        #expect(s == AlertSettings(isEnabled: false, threshold: 35))
     }
 
     @Test("AC4: one bud connected uses that bud")
