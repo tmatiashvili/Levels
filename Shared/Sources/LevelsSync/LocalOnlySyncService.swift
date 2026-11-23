@@ -179,6 +179,66 @@ public actor LocalOnlySyncService: BatterySyncing {
         reporting.setEnabled(true)
     }
 
+    // MARK: Records from elsewhere (NET-001 Design, ADR-0020 Decision 6)
+
+    /// Merges records written elsewhere (SYNC-002 R14: newer `updatedAt` wins, the incoming
+    /// one on a tie) and applies the R8a widget reload rule. Skips `LocalWritePolicy`: the
+    /// writer already throttled (ADR-0008 on the iPhone).
+    ///
+    /// `replacingAllExcept: nil` = partial (keep everything else). Non-nil = full: drop
+    /// entries the incoming set lacks, except the IDs given (the own device). Runs under the
+    /// serial gate. Does nothing while reporting is off (NET-001 R10). Returns whether
+    /// `devices` changed.
+    @discardableResult
+    public func ingest(_ records: [DeviceBattery], replacingAllExcept keep: Set<DeviceID>?) async -> Bool {
+        await acquire()
+        defer { release() }
+        guard reporting.isEnabled else { return false }
+        let cache = cache
+        do {
+            let (before, after) = try await Task.detached(priority: .utility) {
+                try cache.update { file in
+                    let before = SnapshotFile.sorted(file.devices)
+                    file.merge(fetched: records, isFullFetch: keep != nil, pendingOwnIDs: keep ?? [])
+                    return (before, file.devices)
+                }
+            }.value
+            cachedDevices = after
+            if Self.needsWidgetReload(before: before, after: after, received: widgetDevices, now: now()) {
+                requestWidgetReload()
+            }
+            return before != after
+        } catch {
+            Self.logger.error("Cache ingest failed: \(String(describing: error), privacy: .public)")
+            return false
+        }
+    }
+
+    /// Removes one record from the cache (`DELETE /v1/devices/me`, NET-002 R9) and drops any
+    /// held write for it. R8a reload rule. Runs under the serial gate.
+    public func removeLocal(_ id: DeviceID) async {
+        await acquire()
+        defer { release() }
+        pending[id] = nil
+        written[id] = nil
+        let cache = cache
+        do {
+            let (before, after) = try await Task.detached(priority: .utility) {
+                try cache.update { file in
+                    let before = SnapshotFile.sorted(file.devices)
+                    file.devices.removeAll { $0.id == id }
+                    return (before, file.devices)
+                }
+            }.value
+            cachedDevices = after
+            if Self.needsWidgetReload(before: before, after: after, received: widgetDevices, now: now()) {
+                requestWidgetReload()
+            }
+        } catch {
+            Self.logger.error("Cache remove failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+
     /// The hidden set changed: widgets show it, so they reload (R8a, coalesced).
     public func displayPreferencesChanged() {
         requestWidgetReload()

@@ -241,3 +241,7 @@ Write it in two places. Ask Claude to do it if you like: paste both logs and say
 2. Leave the `Levels` zone and the `levels-private-db` subscription. The real app uses the same ones.
 3. The PushCheck app on the iPhone is replaced when the real Levels app is installed (same bundle ID). Or delete it now.
 4. Delete `~/Desktop/SpikeProjects` and this `Spike/` folder when the result is recorded.
+
+## NET-001 AC1: TLS-PSK on loopback (`TLSPSK-Mac/`)
+
+Two throwaway Swift scripts from the NET-001 AC1 spike. `psk.swift` shows per-identity keys on the server (`multi`), the selection block (`sel`) and that keys added after start are not seen (`late`). `restart.swift` shows a rebuilt listener keeps its port and its open connections. Results are in NET-001 AC1. Delete after the real-hardware run of AC1.

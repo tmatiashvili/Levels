@@ -6,6 +6,7 @@
 import AppKit
 import Foundation
 import LevelsModel
+import LevelsNet
 import LevelsReaders
 import LevelsSync
 import LevelsUI
@@ -21,6 +22,8 @@ import os
     let loginItem: LoginItemController
     /// ALR-001: low-battery alerts about this Mac's accessories.
     let alerts: AlertController
+    /// NET-001/NET-002: the local-network hub the iPhone reads (ADR-0020).
+    let hub: HubServer
     /// The App Group `UserDefaults` (menu-bar mode, display preferences).
     @ObservationIgnored let groupDefaults: UserDefaults
     /// R5: set by `applicationShouldHandleReopen`; the device window opens Settings and clears it.
@@ -57,6 +60,8 @@ import os
 
         let reporting = ReportingSetting(suiteName: group)  // SYNC-001 R15a, survives relaunch
         let relay = ChangeRelay()
+        let hubSignal = HubChangeSignal()  // NET-001 R11: wakes held long-polls
+        let reportingChanged = ChangeRelay()  // NET-001 R13: Remove all my data / resume re-apply R1
         let local = LocalOnlySyncService(cache: cache, reporting: reporting, widgetReloader: {
             WidgetCenter.shared.reloadAllTimelines()  // SYNC-001 R8a, coalesced by the service
             Self.logger.notice("Requested widget reload")
@@ -83,8 +88,12 @@ import os
                 await reporter.report(reason: reason)
             },
             reporter: reporter, accessories: accessories, sync: sync, history: history,
-            onDisplayPreferencesChanged: { await local.displayPreferencesChanged() })
-        relay.set { source.notifyChanged() }
+            onDisplayPreferencesChanged: { await local.displayPreferencesChanged() },
+            onReportingChanged: { reportingChanged.fire() })
+        relay.set {
+            source.notifyChanged()
+            hubSignal.fire()
+        }
 
         self.local = local
         self.reporting = reporting
@@ -97,6 +106,14 @@ import os
         loginItem = LoginItemController(service: MainAppLoginService())
         alerts = AlertController(store: UserDefaultsAlertStore(suiteName: group), source: source,  // ALR-001
                                  preferences: preferences)
+        let hub = HubServer(local: local, cache: cache, reporting: reporting, defaults: groupDefaults, identity: identity,
+                            signal: hubSignal, onChange: { relay.fire() },
+                            hubName: {
+                                // SYNC-002 R17: the name this Mac reports; sent only inside the encrypted session.
+                                DefaultDeviceName.resolved(kind: .mac, thisDeviceName: preferences.load().thisDeviceName)
+                            })
+        self.hub = hub
+        reportingChanged.set { Task { @MainActor in await hub.evaluate() } }
     }
 
     /// R6, R7, R10. Runs once.
@@ -120,6 +137,12 @@ import os
         } else {
             Self.logger.notice("Reporting is off (Remove all my data); reporters not started")
         }
+        await hub.evaluate()  // NET-001 R1: listens only while a device is paired (or pairing)
+        #if DEBUG
+        // QA hook (NET-002 AC9 on hardware, NET-001 AC11): `-LevelsOpenPairingAtLaunch YES`
+        // opens the pairing window without the Settings UI. The code is never logged (R12).
+        if UserDefaults.standard.bool(forKey: "LevelsOpenPairingAtLaunch") { hub.openPairing() }
+        #endif
         observePowerSourceForAccessories()
         observeSleepAndWake()  // reporters must skip these while reporting is off
         // R10a (network reachable → refresh) and R11 (15-min fallback fetch) have nothing to
@@ -259,15 +282,19 @@ final class MacSnapshotSource: DeviceSnapshotSource {
     let sync: any BatterySyncing
     let history: HistoryStore
     let onDisplayPreferencesChanged: @Sendable () async -> Void
+    /// NET-001 R13: the hub re-applies its listener rule when reporting turns off or on.
+    let onReportingChanged: @Sendable () -> Void
 
     init(base: SnapshotCacheSource, reporter: BatteryReporter, accessories: AccessoryReporter, sync: any BatterySyncing,
-         history: HistoryStore, onDisplayPreferencesChanged: @escaping @Sendable () async -> Void) {
+         history: HistoryStore, onDisplayPreferencesChanged: @escaping @Sendable () async -> Void,
+         onReportingChanged: @escaping @Sendable () -> Void = {}) {
         self.base = base
         self.reporter = reporter
         self.accessories = accessories
         self.sync = sync
         self.history = history
         self.onDisplayPreferencesChanged = onDisplayPreferencesChanged
+        self.onReportingChanged = onReportingChanged
     }
 
     var isReportingEnabled: Bool { base.isReportingEnabled }
@@ -305,6 +332,9 @@ final class MacSnapshotSource: DeviceSnapshotSource {
             await accessories.start()
             throw error
         }
+        // NET-001 R13: the cache reset also dropped every client's record; pairings stay,
+        // and the hub listener stops while reporting is off.
+        onReportingChanged()
         MacAppModel.logger.notice("Removed all data; reporting is off")
     }
 
@@ -313,6 +343,7 @@ final class MacSnapshotSource: DeviceSnapshotSource {
         await base.resumeReporting()
         await reporter.start()
         await accessories.start()
+        onReportingChanged()
         MacAppModel.logger.notice("Reporting resumed")
     }
 }

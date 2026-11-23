@@ -12,6 +12,7 @@
 		4C0000000000000000000103 /* LevelsReaders in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000000203 /* LevelsReaders */; };
 		4C0000000000000000000104 /* LevelsUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000000204 /* LevelsUI */; };
 		4C0000000000000000000105 /* LevelsWidgetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000000205 /* LevelsWidgetKit */; };
+		4E4554000000000000000101 /* LevelsNet in Frameworks */ = {isa = PBXBuildFile; productRef = 4E4554000000000000000201 /* LevelsNet */; };
 		4C0000000000000000000106 /* CloudKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4C0000000000000000000306 /* CloudKit.framework */; };
 		4C0000000000000000000107 /* LevelsWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4C0000000000000000000302 /* LevelsWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4C0000000000000000000111 /* LevelsModel in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000000211 /* LevelsModel */; };
@@ -102,6 +103,7 @@
 				4C0000000000000000000103 /* LevelsReaders in Frameworks */,
 				4C0000000000000000000104 /* LevelsUI in Frameworks */,
 				4C0000000000000000000105 /* LevelsWidgetKit in Frameworks */,
+				4E4554000000000000000101 /* LevelsNet in Frameworks */,
 				4C0000000000000000000106 /* CloudKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -188,6 +190,7 @@
 				4C0000000000000000000203 /* LevelsReaders */,
 				4C0000000000000000000204 /* LevelsUI */,
 				4C0000000000000000000205 /* LevelsWidgetKit */,
+				4E4554000000000000000201 /* LevelsNet */,
 			);
 			productName = "Levels-Mac";
 			productReference = 4C0000000000000000000301 /* Levels.app */;
@@ -455,6 +458,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
 			productName = LevelsWidgetKit;
+		};
+		4E4554000000000000000201 /* LevelsNet */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsNet;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

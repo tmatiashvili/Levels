@@ -45,6 +45,7 @@ struct MacSettingsView: View {
                 }
             }
             AlertsSettingsSection(alerts: model.alerts, store: store)  // ALR-001
+            HubSettingsSection(hub: model.hub)  // NET-001 R14, NET-002
             Section("Hidden devices") {
                 if store.hiddenRows.isEmpty {
                     Text("None").foregroundStyle(.secondary)
@@ -61,7 +62,7 @@ struct MacSettingsView: View {
             }
             Section("Data") {
                 Button("Remove all my data…", role: .destructive) { confirmingRemoveAll = true }
-                Text("Levels keeps battery data on this Mac only. No iCloud, no analytics.")
+                Text("Levels keeps battery data on this Mac only, and shares it only with iPhones you pair on this Wi-Fi. No iCloud, no analytics.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
