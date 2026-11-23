@@ -10,6 +10,8 @@ targets: [Levels-iOS]
 
 # UI-002: iPhone app screens
 
+> **Note (owner decision M, 2026-11-24):** the free-team iPhone build gets its data from the Mac on the home Wi-Fi, not iCloud (ADR-0020). [NET-004](NET-004-iphone-app-and-widgets-local.md) R1–R11 change this spec for that build: first-run "Connect to your Mac", hub banners instead of the iCloud banner, Settings ▸ Mac, no Remove for old devices (remove them on the Mac), the hub form of Remove all my data, and the About text. Everything else here applies as written.
+
 ## Why
 
 The iPhone app is where the owner sees all devices at a glance, forces a refresh, renames this iPhone, hides devices, and sets up the Shortcuts automation that keeps the iPhone's own reading fresh.
