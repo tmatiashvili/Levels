@@ -192,6 +192,14 @@ struct PairingWindowTests {
         #expect(window.isInProgress)
     }
 
+    @Test func windowIsNotInProgressWhenLocked() {
+        let (window, _, _) = make()
+        window.open(hub: hubInfo)
+        for _ in 0..<5 { window.handshakeFailed() }
+        if case .locked = window.state {} else { Issue.record("not locked") }
+        #expect(!window.isInProgress)
+    }
+
     @Test func openGivesCodeAndPairKey() {
         let (window, _, _) = make()
         let code = window.open(hub: hubInfo)
