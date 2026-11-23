@@ -113,8 +113,9 @@ public enum DevicesTimeline {
 public enum HubWidgetPlan {
     /// The cache counts as fresh this long after `lastFetchAt`.
     public static let freshFor: TimeInterval = 15 * 60
-    /// Reload after a good fetch (or a fresh cache).
-    public static let afterSuccess: TimeInterval = 15 * 60
+    /// Reload after a good fetch (or a fresh cache). 30 minutes (48 a day) stays inside the
+    /// WidgetKit reload budget; 15 minutes (96 a day) did not.
+    public static let afterSuccess: TimeInterval = 30 * 60
     /// Reload after a failed fetch.
     public static let afterFailure: TimeInterval = 60 * 60
 
@@ -124,6 +125,9 @@ public enum HubWidgetPlan {
         case fetched(SnapshotFile)
         /// The Mac was not reached in time: show the cache, marked away.
         case failed
+        /// The Mac was reached but answered with an error (busy, other version, refused
+        /// key): show the cache as it is, not away, and try again on the normal schedule.
+        case macError
         /// The widget can't fetch at all (no pairing readable from the shared Keychain):
         /// fall back to variant A (lead's call 29).
         case unavailable
@@ -132,7 +136,7 @@ public enum HubWidgetPlan {
     /// A fetch from the Mac, given the cached file. Must end within 4 s.
     public typealias Fetch = @Sendable (SnapshotFile?) async -> FetchResult
 
-    public enum Outcome: Equatable, Sendable { case variantA, cacheFresh, fetched, failed }
+    public enum Outcome: Equatable, Sendable { case variantA, cacheFresh, fetched, failed, macError }
 
     /// Picks the snapshot to show and the next reload date. `nil` reload = variant A's policy.
     public static func resolve(cached: SnapshotFile?, now: Date, fetch: Fetch?) async
@@ -144,6 +148,7 @@ public enum HubWidgetPlan {
         switch await fetch(cached) {
         case .fetched(let fetched): return (fetched, now.addingTimeInterval(afterSuccess), .fetched)
         case .unavailable: return (cached, nil, .variantA)
+        case .macError: return (cached, now.addingTimeInterval(afterSuccess), .macError)
         case .failed: break
         }
         var away = cached

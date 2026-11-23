@@ -24,10 +24,26 @@ enum WidgetHubFetch {
                 return .unavailable
             }
             guard let me = cached?.ownDeviceID else { return .unavailable }
-            let client = HubClient(transport: NWHubTransport(findTimeout: .seconds(2), readyTimeout: .seconds(2)),
-                                   pairing: store, me: me)
-            let fetched = await within(limit) { try? await client.snapshot(ifNoneMatch: nil, wait: nil) }
-            guard case .changed(let snapshot, _)?? = fetched else {
+            let transport = NWHubTransport(findTimeout: .seconds(2), readyTimeout: .seconds(2))
+            let client = HubClient(transport: transport, pairing: store, me: me)
+            let fetched = await within(limit) { () -> Result<HubFetch, HubError> in
+                do throws(HubError) {
+                    return .success(try await client.snapshot(ifNoneMatch: nil, wait: nil))
+                } catch {
+                    return .failure(error)
+                }
+            }
+            // Close the connection on every path: after a timeout this also ends the request
+            // still running (its exchange fails once the connection is cancelled).
+            await transport.reset()
+            let snapshot: HubSnapshot
+            switch fetched {
+            case .success(.changed(let s, _))?:
+                snapshot = s
+            case .failure(let error)? where !Self.isUnreachable(error):
+                logger.notice("Widget: the Mac answered with an error (\(String(describing: error), privacy: .public)); cache kept, not away")
+                return .macError
+            default:
                 logger.notice("Widget: Mac not reached in \(limit.components.seconds, privacy: .public) s; cache marked away")
                 return .failed
             }
@@ -52,7 +68,16 @@ enum WidgetHubFetch {
         }
     }
 
-    /// `work`'s result, or `nil` after `limit` (the request is left to finish on its own).
+    /// Not reached at all, as opposed to "reached, but it answered with an error".
+    static func isUnreachable(_ error: HubError) -> Bool {
+        switch error {
+        case .notFound, .notReady, .timedOut, .localNetworkDenied, .notPaired: true
+        case .handshakeRefused, .versionMismatch, .badResponse: false
+        }
+    }
+
+    /// `work`'s result, or `nil` after `limit` (the caller then resets the transport, which
+    /// ends the request).
     static func within<T: Sendable>(_ limit: Duration, _ work: @escaping @Sendable () async -> T) async -> T? {
         let box = ResultBox<T>()
         return await withCheckedContinuation { (c: CheckedContinuation<T?, Never>) in

@@ -8,7 +8,7 @@ func loc(_ key: String.LocalizationValue, locale: Locale = .current) -> String {
 }
 
 /// Age text as a string (UI-001 R8), for accessibility labels and tests. The on-screen
-/// ``AgeText`` uses the same format live.
+/// ``AgeText`` shows the same string.
 public enum AgeFormatting {
     /// The fields R8 allows.
     public static let allowedFields: Set<Date.RelativeFormatStyle.Field> = [.minute, .hour, .day]

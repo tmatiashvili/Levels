@@ -210,6 +210,33 @@ struct HubLoopbackTests {
         await mac.listener.stop()
     }
 
+    /// A POST while the long-poll holds the kept connection used to replace it and leave the
+    /// old one open; a few rounds filled the Mac's 4-connection limit (R12) and the iPhone
+    /// went "away". Now the POST gets a short connection that is closed afterwards.
+    @Test func postDuringLongPollDoesNotLeakConnections() async throws {
+        let mac = Mac()
+        await mac.report(level: 80)
+        let port = try await mac.listener.start()
+        let pairing = try await pair(mac, port: port)
+        let transport = NWHubTransport(locator: FixedHubLocator(loopbackPort: port))
+        let client = HubClient(transport: transport, pairing: InMemoryClientPairingStore(pairing), me: hubPhoneID)
+        guard case .changed(_, var tag) = try await client.snapshot(ifNoneMatch: nil) else {
+            Issue.record("expected 200"); return
+        }
+        for round in 0..<6 {
+            let current = tag
+            let poll = Task { try await client.snapshot(ifNoneMatch: current, wait: .seconds(20)) }
+            try await Task.sleep(for: .milliseconds(300))
+            _ = try await client.post(phoneReading(level: 40 + round, at: Date()))  // wakes the poll
+            guard case .changed(_, let next) = try await poll.value else { Issue.record("poll did not wake"); return }
+            tag = next
+        }
+        try await Task.sleep(for: .milliseconds(300))  // let the server see the closes
+        #expect(await mac.listener.connectionCount <= 1)
+        await transport.reset()
+        await mac.listener.stop()
+    }
+
     @Test func wrongCodeThenForget() async throws {
         let mac = Mac()
         await mac.report(level: 60)
