@@ -10,6 +10,8 @@ targets: [Shared, Levels-Mac, Levels-iOS]
 
 # NRB-001: BLE nearby mode (Mac to iPhone without the cloud)
 
+> **Note (2026-11-24):** owner decision M picked the home-network hub (ADR-0020) over BLE for the free team. This spec stays parked under lead's call 6e.
+
 ## Why
 
 CloudKit plus silent push takes minutes, and needs internet on both devices. When the Mac is in a bag next to the iPhone (on a plane, on a train with poor signal), Bluetooth LE could carry the Mac's level directly in seconds. This spec decides whether that's worth building.

@@ -10,6 +10,8 @@ targets: [Shared, Widgets-iOS]
 
 # UI-003: iPhone and iPad widgets
 
+> **Note (owner decision M, 2026-11-24):** in the free-team hub build, [NET-004](NET-004-iphone-app-and-widgets-local.md) R12–R15 change the empty states, add an "Away from Mac" footer, and pick how the widget gets data: variant A reads the App Group cache as this spec says; variant B fetches from the Mac in `getTimeline` (pending the free-team probe, lead's call 23). Everything else here applies as written.
+
 ## Why
 
 The point of Levels is not having to open anything: a glance at the Home Screen, Lock Screen or StandBy should answer "is my MacBook charged?".
