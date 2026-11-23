@@ -1,6 +1,6 @@
 # ADR-0005: One `DeviceBattery` record per battery in a custom `Levels` zone, named by its stable ID
 
-- **Status:** Proposed
+- **Status:** Accepted (owner decision J, 2026-11-23)
 - **Date:** 2026-11-23
 - **Deciders:** project owner
 - **Related:** ADR-0004, ADR-0006, ADR-0007, ADR-0008, SYNC-001, SYNC-002

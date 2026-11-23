@@ -2,7 +2,7 @@
 id: SPIKE-001
 title: Debug-build silent push check (Production CloudKit container)
 milestone: v0.1
-status: Draft
+status: Deferred (needs the paid program, owner decision K)
 depends_on: []
 adrs: [5, 6, 13, 18]
 targets: [Levels-iOS, Levels-Mac]

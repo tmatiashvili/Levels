@@ -2,6 +2,16 @@
 
 How to write one: [ADR-0001](../adr/0001-record-architecture-decisions.md) and [template.md](template.md). Specs for v0.1–v0.2 move from Draft to Ready after review; v0.3 and later stay Outline until their milestone starts. Decisions are indexed in [../adr/README.md](../adr/README.md); terms are in [../glossary.md](../glossary.md); owner decisions and lead's calls are in [../decisions-log.md](../decisions-log.md).
 
+## Now: Mac-first (free Personal Team)
+
+Owner decision K (2026-11-23): no paid Apple Developer Program for now, so no iCloud and no push. Until the owner enrolls, the build order is:
+
+1. SYNC-002 (done), the local-only `BatterySyncing` stand-in, MAC-002, UI-001.
+2. UI-004 (menu-bar content; desktop widgets if the free team allows the App Group), MAC-001 without its iCloud and push parts.
+3. MAC-003 (accessories), pulled forward from v0.3.
+
+SPIKE-001, SYNC-001 and everything iPhone, iPad and Watch wait for enrollment. The v0.1 plan below is unchanged and resumes then.
+
 ## v0.1 — Mac agent and iPhone app with widgets
 
 | ID | Title | Status | Depends on |
