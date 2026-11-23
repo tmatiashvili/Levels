@@ -65,7 +65,8 @@ import os
                                        identity: identity, preferences: preferences,
                                        log: ReportLog(suiteName: group), reporting: reporting)
         let accessories = AccessoryReporter(reader: MacAccessoryReader(), sync: sync,
-                                            parentID: { (try? identity.currentDeviceID()) ?? nil })
+                                            parentID: { (try? identity.currentDeviceID()) ?? nil },
+                                            reporting: reporting)
         let source = MacSnapshotSource(
             base: SnapshotCacheSource(cache: cache, preferences: preferences, reporting: reporting,
                                       removeAllData: { try await local.removeAllData() }) { reason in
@@ -262,12 +263,13 @@ final class MacSnapshotSource: DeviceSnapshotSource {
     func setThisDeviceName(_ name: String?) async { await base.setThisDeviceName(name) }
     func remove(_ id: DeviceID) async throws { try await base.remove(id) }
 
-    /// Stops the reporter and waits for its in-flight report, then removes under the sync
+    /// Stops both reporters and waits for their in-flight reports, then removes under the sync
     /// service's gate (which also turns reporting off). On failure the reporter runs again.
     func removeAllData() async throws {
         await reporter.stop()
         await accessories.stop()
         await reporter.waitUntilIdle()
+        await accessories.waitUntilIdle()
         do {
             try await base.removeAllData()
         } catch {

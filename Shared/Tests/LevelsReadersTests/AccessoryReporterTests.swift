@@ -21,9 +21,10 @@ struct AccessoryReporterTests {
                                                   component: .main, level: 64, readAt: clock.date)])
     }
 
-    func reporter(_ reader: FixedAccessoryReader, parent: DeviceID?? = nil) -> AccessoryReporter {
+    func reporter(_ reader: FixedAccessoryReader, parent: DeviceID?? = nil,
+                  reporting: ReportingSetting = .inMemory()) -> AccessoryReporter {
         let id = parent ?? mac
-        return AccessoryReporter(reader: reader, sync: sync, parentID: { id }, clock: clock)
+        return AccessoryReporter(reader: reader, sync: sync, parentID: { id }, reporting: reporting, clock: clock)
     }
 
     @Test func R3_R3a_launchReportsEveryComponentWithParentThisMac() async {
@@ -144,5 +145,58 @@ struct AccessoryReporterTests {
         reader.emit(mouse)
         await settle()
         #expect(await sync.calls.count == 1)
+    }
+
+    // MARK: SYNC-001 R15a reporting off
+
+    @Test func R15a_offScansAndSendsNothingFromStartOrReport() async {
+        let reader = FixedAccessoryReader(mouse)
+        let r = reporter(reader, reporting: .inMemory(enabled: false))
+        await r.start()
+        reader.emit(mouse)  // no run loop consumes it
+        await settle()
+        for reason in [ReportReason.wake, .batteryChange, .heartbeat, .userRefresh] {
+            #expect(await r.report(reason: reason) == nil)
+        }
+        #expect(reader.readCount == 0)  // not even scanned
+        #expect(await sync.calls.isEmpty)
+        #expect(clock.sleeperCount == 0)  // no poll armed
+    }
+
+    @Test func R15a_turningOffStopsConnectEventsAndThePoll() async {
+        let reporting = ReportingSetting.inMemory()
+        let reader = FixedAccessoryReader(mouse)
+        let r = reporter(reader, reporting: reporting)
+        await r.start()
+        await waitFor { [sync, clock] in await sync.calls.count == 1 && clock.sleeperCount == 1 }
+        reporting.setEnabled(false)
+        reader.emit(mouse)  // HID connect event: skipped
+        clock.advance(by: .seconds(300))  // the poll fires, scans nothing, is not re-armed
+        await settle()
+        await waitFor { [clock] in clock.sleeperCount == 0 }
+        #expect(await sync.reasons == [.launch])
+        #expect(reader.readCount == 1)
+        await r.stop()
+    }
+
+    @Test func R15a_resumeAfterOffStartsWithALaunchScan() async {
+        let reporting = ReportingSetting.inMemory(enabled: false)
+        let r = reporter(FixedAccessoryReader(mouse), reporting: reporting)
+        await r.start()
+        reporting.setEnabled(true)
+        await r.start()  // the first start did nothing, so this one runs
+        await waitFor { [sync] in await sync.calls.count == 1 }
+        #expect(await sync.reasons == [.launch])
+        await r.stop()
+    }
+
+    @Test func R15a_waitUntilIdleReturnsAfterTheScanInFlight() async {
+        await sync.set(yields: 50)
+        let r = reporter(FixedAccessoryReader(mouse))
+        let inFlight = Task { await r.report(reason: .wake) }
+        await waitFor { [sync] in await sync.maxInFlight == 1 }
+        await r.waitUntilIdle()
+        #expect(await sync.calls.count == 1)
+        _ = await inFlight.value
     }
 }

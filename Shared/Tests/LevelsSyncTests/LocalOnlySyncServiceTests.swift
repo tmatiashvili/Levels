@@ -301,6 +301,17 @@ struct LocalOnlySyncServiceTests {
         #expect(cache.read()?.devices == [back])
     }
 
+    @Test func LOCAL_R15a_startWhileOffDoesNotRecreateTheCache() async throws {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        try await s.removeAllData()
+        let relaunched = service()  // same setting, now off: a relaunch after removal
+        await relaunched.start()
+        #expect(!FileManager.default.fileExists(atPath: cache.fileURL.path))
+        #expect(await relaunched.report([mac(at: clock.date)], reason: .launch) == .skipped)
+        #expect(cache.read() == nil)
+    }
+
     @Test func LOCAL_R15a_removalWaitsForAReportInProgress() async throws {
         let s = service()
         async let first = s.report([mac(at: clock.date)], reason: .launch)

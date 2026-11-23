@@ -135,7 +135,10 @@ public actor LocalOnlySyncService: BatterySyncing {
     // MARK: Local surface (SYNC-001 shape)
 
     /// Records the local-only status in the cache so widgets read it (SYNC-001 R21).
+    /// While reporting is off (R15a) it writes nothing, so a relaunch after "Remove all my
+    /// data" does not bring the deleted cache file back.
     public func start() async {
+        guard reporting.isEnabled else { return }
         let cache = cache
         do {
             try await Task.detached(priority: .utility) {

@@ -17,6 +17,10 @@ import os
 ///   record keeps its last level and `updatedAt`, and the UI shows its age (R4).
 /// - Unparseable data is not reported; each distinct problem is logged once per run (R5).
 ///
+/// - While reporting is off ("Remove all my data", SYNC-001 R15a) nothing is scanned or
+///   handed to sync: ``start()`` does nothing, and ``report(reason:)``, connect events and
+///   the poll return at once (the poll is not re-armed).
+///
 /// Throttling is sync's job (ADR-0008 / `LocalWritePolicy`, judged per record).
 public actor AccessoryReporter {
     /// ADR-0014 rule 5 / ADR-0015: poll every 5 min while accessories are connected.
@@ -30,6 +34,8 @@ public actor AccessoryReporter {
     private let reader: any AccessoryBatteryReader
     private let sync: any BatterySyncing
     private let parentID: @Sendable () -> DeviceID?
+    /// SYNC-001 R15a: while off, nothing is scanned or handed to sync.
+    private let reporting: ReportingSetting
     private let pollTimer: @Sendable (Duration) -> @Sendable () async throws -> Void
 
     private var runTask: Task<Void, Never>?
@@ -46,16 +52,19 @@ public actor AccessoryReporter {
 
     /// - Parameters:
     ///   - parentID: this Mac's device ID (ADR-0007); `nil` skips the report.
+    ///   - reporting: the same setting ``BatteryReporter`` reads (SYNC-001 R15a).
     ///   - clock: drives the poll; tests pass a manual clock.
     public init<C: Clock<Duration>>(
         reader: any AccessoryBatteryReader,
         sync: any BatterySyncing,
         parentID: @escaping @Sendable () -> DeviceID?,
+        reporting: ReportingSetting = .inMemory(),
         clock: C = ContinuousClock()
     ) {
         self.reader = reader
         self.sync = sync
         self.parentID = parentID
+        self.reporting = reporting
         self.pollTimer = { interval in
             let deadline = clock.now.advanced(by: interval)
             return { try await clock.sleep(until: deadline, tolerance: Self.pollTolerance) }
@@ -70,9 +79,10 @@ public actor AccessoryReporter {
     // MARK: Lifecycle
 
     /// Scans with `.launch`, then consumes connect/disconnect events and runs the poll
-    /// until ``stop()``. Calling it again while running does nothing.
+    /// until ``stop()``. Calling it again while running, or while reporting is off
+    /// (SYNC-001 R15a), does nothing.
     public func start() {
-        guard runTask == nil else { return }
+        guard runTask == nil, reporting.isEnabled else { return }
         let changes = reader.changes()
         runTask = Task {
             await self.report(reason: .launch)
@@ -92,14 +102,25 @@ public actor AccessoryReporter {
         currentInterval = nil
     }
 
+    /// Returns once the scan in progress and any queued behind it have finished
+    /// (SYNC-001 R15a: removal runs after the in-flight report, not alongside it).
+    public func waitUntilIdle() async {
+        await acquire()
+        release()
+    }
+
     // MARK: Reporting
 
     /// Scans and hands every connected component to sync. Returns sync's outcome, or `nil`
-    /// when nothing was sent (no accessory connected, or no device ID yet).
+    /// when nothing was sent (no accessory connected, no device ID yet, or reporting is off).
     @discardableResult
     public func report(reason: ReportReason) async -> ReportOutcome? {
         await acquire()
         defer { release() }
+        guard reporting.isEnabled else {  // SYNC-001 R15a: no scan, no poll re-arm
+            Self.logger.info("Reporting is off; skipping accessory scan \(reason.rawValue, privacy: .public)")
+            return nil
+        }
         let scan = await reader.read()
         logNewProblems(scan.problems)
         noteConnections(scan.readings)

@@ -44,7 +44,8 @@ struct DeviceWindowView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        let ideal = Self.idealSize(rows: model.store.rows.count)
+        let ideal = Self.idealSize(height: PopoverLayout.height(rows: model.store.rows, state: model.store.state,
+                                                                isReportingOff: model.store.isReportingOff))
         DevicesPanel(highlighted: model.highlighted)
             .frame(minWidth: Self.minSize.width, idealWidth: ideal.width, maxWidth: 560,
                    minHeight: Self.minSize.height, idealHeight: ideal.height)
@@ -65,8 +66,8 @@ struct DeviceWindowView: View {
 
     /// First-open size: the popover's size for the current rows, a little wider for the
     /// window chrome (UI-004 R6, MAC-001 R2a). Later opens keep the user's size.
-    static func idealSize(rows: Int) -> CGSize {
-        CGSize(width: 360, height: max(minSize.height, MenuBarPopover.height(rows: rows)))
+    static func idealSize(height popoverHeight: CGFloat) -> CGSize {
+        CGSize(width: 360, height: max(minSize.height, popoverHeight))
     }
 
     /// R5: Settings opens only from SwiftUI, once per request.
