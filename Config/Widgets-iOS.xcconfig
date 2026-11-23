@@ -1,10 +1,11 @@
-// Widgets-iOS: iOS/iPadOS widget extension, embedded in Levels-iOS (UI-003).
+// Widgets-iOS: iPhone widget extension, embedded in Levels-iOS (UI-003, NET-004).
 // Links LevelsModel, LevelsUI, LevelsWidgetKit only (ADR-0003 §3).
 #include "Levels.xcconfig"
 
 SDKROOT = iphoneos
 SUPPORTED_PLATFORMS = iphoneos iphonesimulator
-TARGETED_DEVICE_FAMILY = 1,2
+// Same as Levels-iOS: iPhone only until UI-005.
+TARGETED_DEVICE_FAMILY = 1
 
 PRODUCT_NAME = LevelsWidgets
 PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels.widgets

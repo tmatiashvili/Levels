@@ -17,6 +17,15 @@
 		4C0000000000000000000111 /* LevelsModel in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000000211 /* LevelsModel */; };
 		4C0000000000000000000114 /* LevelsUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000000214 /* LevelsUI */; };
 		4C0000000000000000000115 /* LevelsWidgetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000000215 /* LevelsWidgetKit */; };
+		4C0000000000000000001101 /* LevelsModel in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001201 /* LevelsModel */; };
+		4C0000000000000000001102 /* LevelsSync in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001202 /* LevelsSync */; };
+		4C0000000000000000001103 /* LevelsReaders in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001203 /* LevelsReaders */; };
+		4C0000000000000000001104 /* LevelsUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001204 /* LevelsUI */; };
+		4C0000000000000000001105 /* LevelsWidgetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001205 /* LevelsWidgetKit */; };
+		4C0000000000000000001107 /* LevelsWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4C0000000000000000001302 /* LevelsWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		4C0000000000000000001111 /* LevelsModel in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001211 /* LevelsModel */; };
+		4C0000000000000000001114 /* LevelsUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001214 /* LevelsUI */; };
+		4C0000000000000000001115 /* LevelsWidgetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0000000000000000001215 /* LevelsWidgetKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -26,6 +35,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = 4C0000000000000000000802;
 			remoteInfo = "Widgets-Mac";
+		};
+		4C0000000000000000001601 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4C0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4C0000000000000000001802;
+			remoteInfo = "Widgets-iOS";
+		};
+		4C0000000000000000001602 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4C0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4C0000000000000000001801;
+			remoteInfo = "Levels-iOS";
 		};
 /* End PBXContainerItemProxy section */
 
@@ -37,6 +60,17 @@
 			dstSubfolderSpec = 13;
 			files = (
 				4C0000000000000000000107 /* LevelsWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C0000000000000000001704 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				4C0000000000000000001107 /* LevelsWidgets.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -54,6 +88,10 @@
 		4C0000000000000000000315 /* Levels-Watch.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Levels-Watch.xcconfig"; sourceTree = "<group>"; };
 		4C0000000000000000000316 /* Widgets-iOS.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Widgets-iOS.xcconfig"; sourceTree = "<group>"; };
 		4C0000000000000000000317 /* Widgets-Watch.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Widgets-Watch.xcconfig"; sourceTree = "<group>"; };
+		4C0000000000000000001301 /* Levels.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Levels.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4C0000000000000000001302 /* LevelsWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LevelsWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		4C0000000000000000001303 /* LevelsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LevelsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4C0000000000000000001318 /* Levels-iOSTests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Levels-iOSTests.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -70,6 +108,20 @@
 				Info.plist,
 			);
 			target = 4C0000000000000000000802 /* Widgets-Mac */;
+		};
+		4C0000000000000000001421 /* Exceptions for "Levels-iOS" folder in "Levels-iOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 4C0000000000000000001801 /* Levels-iOS */;
+		};
+		4C0000000000000000001422 /* Exceptions for "Widgets-iOS" folder in "Widgets-iOS" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 4C0000000000000000001802 /* Widgets-iOS */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -88,6 +140,27 @@
 				4C0000000000000000000422 /* Exceptions for "Widgets-Mac" folder in "Widgets-Mac" target */,
 			);
 			path = "Widgets-Mac";
+			sourceTree = "<group>";
+		};
+		4C0000000000000000001411 /* Levels-iOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4C0000000000000000001421 /* Exceptions for "Levels-iOS" folder in "Levels-iOS" target */,
+			);
+			path = "Levels-iOS";
+			sourceTree = "<group>";
+		};
+		4C0000000000000000001412 /* Widgets-iOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4C0000000000000000001422 /* Exceptions for "Widgets-iOS" folder in "Widgets-iOS" target */,
+			);
+			path = "Widgets-iOS";
+			sourceTree = "<group>";
+		};
+		4C0000000000000000001413 /* Levels-iOSTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Levels-iOSTests";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -116,6 +189,35 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		4C0000000000000000001702 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4C0000000000000000001101 /* LevelsModel in Frameworks */,
+				4C0000000000000000001102 /* LevelsSync in Frameworks */,
+				4C0000000000000000001103 /* LevelsReaders in Frameworks */,
+				4C0000000000000000001104 /* LevelsUI in Frameworks */,
+				4C0000000000000000001105 /* LevelsWidgetKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C0000000000000000001712 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4C0000000000000000001111 /* LevelsModel in Frameworks */,
+				4C0000000000000000001114 /* LevelsUI in Frameworks */,
+				4C0000000000000000001115 /* LevelsWidgetKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C0000000000000000001722 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -125,6 +227,9 @@
 				4C0000000000000000000005 /* Config */,
 				4C0000000000000000000411 /* Levels-Mac */,
 				4C0000000000000000000412 /* Widgets-Mac */,
+				4C0000000000000000001411 /* Levels-iOS */,
+				4C0000000000000000001412 /* Widgets-iOS */,
+				4C0000000000000000001413 /* Levels-iOSTests */,
 				4C0000000000000000000004 /* Frameworks */,
 				4C0000000000000000000003 /* Products */,
 			);
@@ -135,6 +240,9 @@
 			children = (
 				4C0000000000000000000301 /* Levels.app */,
 				4C0000000000000000000302 /* LevelsWidgets.appex */,
+				4C0000000000000000001301 /* Levels.app */,
+				4C0000000000000000001302 /* LevelsWidgets.appex */,
+				4C0000000000000000001303 /* LevelsTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -157,6 +265,7 @@
 				4C0000000000000000000315 /* Levels-Watch.xcconfig */,
 				4C0000000000000000000316 /* Widgets-iOS.xcconfig */,
 				4C0000000000000000000317 /* Widgets-Watch.xcconfig */,
+				4C0000000000000000001318 /* Levels-iOSTests.xcconfig */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -218,6 +327,83 @@
 			productReference = 4C0000000000000000000302 /* LevelsWidgets.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		4C0000000000000000001801 /* Levels-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4C0000000000000000001A02 /* Build configuration list for PBXNativeTarget "Levels-iOS" */;
+			buildPhases = (
+				4C0000000000000000001701 /* Sources */,
+				4C0000000000000000001702 /* Frameworks */,
+				4C0000000000000000001703 /* Resources */,
+				4C0000000000000000001704 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4C0000000000000000001501 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				4C0000000000000000001411 /* Levels-iOS */,
+			);
+			name = "Levels-iOS";
+			packageProductDependencies = (
+				4C0000000000000000001201 /* LevelsModel */,
+				4C0000000000000000001202 /* LevelsSync */,
+				4C0000000000000000001203 /* LevelsReaders */,
+				4C0000000000000000001204 /* LevelsUI */,
+				4C0000000000000000001205 /* LevelsWidgetKit */,
+			);
+			productName = "Levels-iOS";
+			productReference = 4C0000000000000000001301 /* Levels.app */;
+			productType = "com.apple.product-type.application";
+		};
+		4C0000000000000000001802 /* Widgets-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4C0000000000000000001A03 /* Build configuration list for PBXNativeTarget "Widgets-iOS" */;
+			buildPhases = (
+				4C0000000000000000001711 /* Sources */,
+				4C0000000000000000001712 /* Frameworks */,
+				4C0000000000000000001713 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				4C0000000000000000001412 /* Widgets-iOS */,
+			);
+			name = "Widgets-iOS";
+			packageProductDependencies = (
+				4C0000000000000000001211 /* LevelsModel */,
+				4C0000000000000000001214 /* LevelsUI */,
+				4C0000000000000000001215 /* LevelsWidgetKit */,
+			);
+			productName = "Widgets-iOS";
+			productReference = 4C0000000000000000001302 /* LevelsWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		4C0000000000000000001803 /* Levels-iOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4C0000000000000000001A04 /* Build configuration list for PBXNativeTarget "Levels-iOSTests" */;
+			buildPhases = (
+				4C0000000000000000001721 /* Sources */,
+				4C0000000000000000001722 /* Frameworks */,
+				4C0000000000000000001723 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4C0000000000000000001502 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				4C0000000000000000001413 /* Levels-iOSTests */,
+			);
+			name = "Levels-iOSTests";
+			packageProductDependencies = (
+			);
+			productName = "Levels-iOSTests";
+			productReference = 4C0000000000000000001303 /* LevelsTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -233,6 +419,16 @@
 					};
 					4C0000000000000000000802 = {
 						CreatedOnToolsVersion = 27.2;
+					};
+					4C0000000000000000001801 = {
+						CreatedOnToolsVersion = 27.2;
+					};
+					4C0000000000000000001802 = {
+						CreatedOnToolsVersion = 27.2;
+					};
+					4C0000000000000000001803 = {
+						CreatedOnToolsVersion = 27.2;
+						TestTargetID = 4C0000000000000000001801;
 					};
 				};
 			};
@@ -255,6 +451,9 @@
 			targets = (
 				4C0000000000000000000801 /* Levels-Mac */,
 				4C0000000000000000000802 /* Widgets-Mac */,
+				4C0000000000000000001801 /* Levels-iOS */,
+				4C0000000000000000001802 /* Widgets-iOS */,
+				4C0000000000000000001803 /* Levels-iOSTests */,
 			);
 		};
 /* End PBXProject section */
@@ -268,6 +467,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		4C0000000000000000000713 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C0000000000000000001703 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C0000000000000000001713 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C0000000000000000001723 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -291,6 +511,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		4C0000000000000000001701 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C0000000000000000001711 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4C0000000000000000001721 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -298,6 +539,16 @@
 			isa = PBXTargetDependency;
 			target = 4C0000000000000000000802 /* Widgets-Mac */;
 			targetProxy = 4C0000000000000000000601 /* PBXContainerItemProxy */;
+		};
+		4C0000000000000000001501 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4C0000000000000000001802 /* Widgets-iOS */;
+			targetProxy = 4C0000000000000000001601 /* PBXContainerItemProxy */;
+		};
+		4C0000000000000000001502 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4C0000000000000000001801 /* Levels-iOS */;
+			targetProxy = 4C0000000000000000001602 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -376,6 +627,48 @@
 			};
 			name = Release;
 		};
+		4C0000000000000000001B11 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C0000000000000000000314 /* Levels-iOS.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		4C0000000000000000001B12 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C0000000000000000000314 /* Levels-iOS.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		4C0000000000000000001B21 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C0000000000000000000316 /* Widgets-iOS.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		4C0000000000000000001B22 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C0000000000000000000316 /* Widgets-iOS.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
+		4C0000000000000000001B31 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C0000000000000000001318 /* Levels-iOSTests.xcconfig */;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		4C0000000000000000001B32 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C0000000000000000001318 /* Levels-iOSTests.xcconfig */;
+			buildSettings = {
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -402,6 +695,33 @@
 			buildConfigurations = (
 				4C0000000000000000000B21 /* Debug */,
 				4C0000000000000000000B22 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4C0000000000000000001A02 /* Build configuration list for PBXNativeTarget "Levels-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4C0000000000000000001B11 /* Debug */,
+				4C0000000000000000001B12 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4C0000000000000000001A03 /* Build configuration list for PBXNativeTarget "Widgets-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4C0000000000000000001B21 /* Debug */,
+				4C0000000000000000001B22 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4C0000000000000000001A04 /* Build configuration list for PBXNativeTarget "Levels-iOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4C0000000000000000001B31 /* Debug */,
+				4C0000000000000000001B32 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -452,6 +772,46 @@
 			productName = LevelsUI;
 		};
 		4C0000000000000000000215 /* LevelsWidgetKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsWidgetKit;
+		};
+		4C0000000000000000001201 /* LevelsModel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsModel;
+		};
+		4C0000000000000000001202 /* LevelsSync */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsSync;
+		};
+		4C0000000000000000001203 /* LevelsReaders */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsReaders;
+		};
+		4C0000000000000000001204 /* LevelsUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsUI;
+		};
+		4C0000000000000000001205 /* LevelsWidgetKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsWidgetKit;
+		};
+		4C0000000000000000001211 /* LevelsModel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsModel;
+		};
+		4C0000000000000000001214 /* LevelsUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
+			productName = LevelsUI;
+		};
+		4C0000000000000000001215 /* LevelsWidgetKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 4C0000000000000000000901 /* XCLocalSwiftPackageReference "Shared" */;
 			productName = LevelsWidgetKit;
