@@ -47,7 +47,7 @@ The Mac app works today on the free team, local only: it shows this Mac's own ba
 2. **First launch** turns on Open at login (MAC-001 R6). Turn it off in Levels → ⋯ → Settings… if you don't want it.
 3. **Use it.** Click the menu-bar item for the list; ⟳ or ⌘R refreshes. ⋯ has Settings, About and Quit. If the menu-bar item is hidden, open Levels again from Finder: Settings comes up.
 4. **Add the widget.** Right-click the desktop → Edit Widgets…, search "Levels", drag the small or medium "Battery Levels" widget onto the desktop. Clicking it opens the Levels device window.
-5. **Rebuild every week.** The free profile lasts 7 days. After that the app may stop launching: build again in Xcode (⌘B or ⌘R) and, if you use a copy, replace it with the new `Levels.app`.
+5. **Rebuild every week.** The free profile lasts 7 days. After that the app may stop launching: run `scripts/reinstall.sh` (see "Weekly reinstall").
 
 ### Connect your iPhone to the Mac
 
@@ -87,9 +87,25 @@ The iPhone app works on the free team with the Mac as its hub (owner decision M,
 3. **Use it.** The list shows this iPhone; pull down to refresh (reports `.userRefresh`). ⚙ opens Settings: rename, the Mac section (Connect, Pair again, Forget), Shortcuts setup, hidden devices, Remove all my data.
 4. **Add widgets.** Home Screen: touch and hold → Edit → Add Widget → Levels → small, medium or large "Battery Levels". Lock Screen: touch and hold → Customize → Lock Screen → widgets → Levels (circular, rectangular, inline). A tap opens `levels://device/<uuid>`.
 5. **Keep it fresh.** Set up the "Report Battery" automations (RPT-002; the app's hint card and Settings → "Set up Shortcuts automation" show the steps). Background refresh runs too, when iOS allows it.
-6. **Rebuild every week.** The free profile lasts 7 days.
+6. **Rebuild every week.** The free profile lasts 7 days: run `scripts/reinstall.sh` (see "Weekly reinstall").
 
 Check it worked: `xcrun devicectl device copy from --device <UDID> --domain-type appGroupDataContainer --domain-identifier group.com.tmatiashvili.levels --source Levels/snapshot.json --destination /tmp/levels-snapshot.json` copies the cache the app wrote; it holds this iPhone's record with `"type":"iphone"` and the current level. Unit tests of the app target: `xcodebuild test -project Levels.xcodeproj -scheme Levels-iOS -destination 'platform=iOS Simulator,name=iPhone 18 Pro'`.
+
+## Weekly reinstall
+
+The free profile lasts 7 days. One command rebuilds both apps and puts them back:
+
+```sh
+scripts/reinstall.sh
+```
+
+- **Mac:** builds `Levels-Mac` (Debug), quits Levels, replaces `~/Desktop/Levels-try/Levels.app`, registers the app and its widget again and opens it. Desktop widgets keep working because the app stays at the same path.
+- **iPhone:** finds the connected iPhone, builds `Levels-iOS` (Debug) for it, installs it with `devicectl` and opens it. If no iPhone is reachable it says so and does only the Mac. Unlock the iPhone first.
+- **At the end** it prints when the new profiles expire. Run it again before that date.
+- **Options:** `--mac-only`, `--ios-only`, `--device <UDID>` (or `LEVELS_IPHONE_ID=<UDID>`) to pick an iPhone, `LEVELS_MAC_APP=<path>` for another Mac copy.
+- Build output and logs go to `build/` in the repo (ignored by git). If a build fails, the script shows the errors and the log file.
+
+Xcode reuses a profile that is still valid, so the printed date does not always move 7 days ahead. Use the date it prints.
 
 ## Free Personal Team (now)
 
