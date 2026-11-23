@@ -19,6 +19,8 @@ import os
 
     let store: DeviceListStore
     let loginItem: LoginItemController
+    /// ALR-001: low-battery alerts about this Mac's accessories.
+    let alerts: AlertController
     /// The App Group `UserDefaults` (menu-bar mode, display preferences).
     @ObservationIgnored let groupDefaults: UserDefaults
     /// R5: set by `applicationShouldHandleReopen`; the device window opens Settings and clears it.
@@ -84,6 +86,8 @@ import os
         self.accessories = accessories
         store = DeviceListStore(source: source, preferences: preferences)
         loginItem = LoginItemController(service: MainAppLoginService())
+        alerts = AlertController(store: UserDefaultsAlertStore(suiteName: group), source: source,  // ALR-001
+                                 preferences: preferences)
     }
 
     /// R6, R7, R10. Runs once.
@@ -99,6 +103,7 @@ import os
             Self.logger.error("Device ID lookup failed: \(String(describing: error), privacy: .public)")
         }
         tasks.append(Task { await self.store.start() })
+        alerts.start()  // ALR-001 R12: before the reporters, so their first reports are seen
         if reporting.isEnabled {
             await reporter.start()  // MAC-002 R6a launch report, IOPS changes, 30-min heartbeat
             await accessories.start()  // MAC-003: launch scan, HID + Bluetooth connect/disconnect, 5/15-min poll

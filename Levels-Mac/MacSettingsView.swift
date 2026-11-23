@@ -44,6 +44,7 @@ struct MacSettingsView: View {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             }
+            AlertsSettingsSection(alerts: model.alerts, store: store)  // ALR-001
             Section("Hidden devices") {
                 if store.hiddenRows.isEmpty {
                     Text("None").foregroundStyle(.secondary)
