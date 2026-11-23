@@ -40,8 +40,12 @@ final class HubClientConnection: @unchecked Sendable {
         connection = NWConnection(to: endpoint, using: parameters)
     }
 
-    /// Waits until ready. TLS errors map to `.handshakeRefused`, policy denied to
-    /// `.localNetworkDenied`, the rest (and the timeout) to `.notReady`.
+    /// A dropped connection must not stay open (a replaced or forgotten one used to linger).
+    deinit { connection.cancel() }
+
+    /// Waits until ready. TLS errors that mean "the Mac doesn't know this key" map to
+    /// `.handshakeRefused`, policy denied to `.localNetworkDenied`, the rest (and the
+    /// timeout) to `.notReady`.
     func open(timeout: Duration) async throws(HubError) {
         let result: Result<Void, HubError> = await withCheckedContinuation { c in
             let once = Once(c)
@@ -72,6 +76,11 @@ final class HubClientConnection: @unchecked Sendable {
     /// Usable for another request: ready, not failed, not busy.
     var isUsable: Bool {
         queue.sync { connection.state == .ready && failure == nil && !busy }
+    }
+
+    /// Ready and not failed; it may be busy with a request (the long-poll).
+    var isAlive: Bool {
+        queue.sync { connection.state == .ready && failure == nil }
     }
 
     /// Sends one request and reads one response.
@@ -131,11 +140,19 @@ final class HubClientConnection: @unchecked Sendable {
 
     static func map(_ error: NWError) -> HubError {
         switch error {
-        case .tls: return .handshakeRefused
+        // Only the statuses below mean the Mac refused this iPhone; any other TLS failure
+        // (reset, aborted mid-handshake) is "not reachable", not "forgot this iPhone".
+        case .tls(let status) where refusedTLSStatuses.contains(status): return .handshakeRefused
         case .dns(let code) where code == DNSServiceErrorType(kDNSServiceErr_PolicyDenied): return .localNetworkDenied
         default: return .notReady
         }
     }
+
+    /// The Mac's TLS answers that mean "unknown key or identity": `errSSLUnknownPSKIdentity`,
+    /// `errSSLPeerBadRecordMac` (wrong key), `errSSLBadRecordMac`, and
+    /// `errSSLPeerHandshakeFail` (its PSK selection refused the identity, e.g. a removed device).
+    /// Closed or aborted handshakes (-9806, -9816) and the rest are "not reachable".
+    static let refusedTLSStatuses: Set<OSStatus> = [-9864, -9820, -9846, -9824]
 
     static func seconds(_ d: Duration) -> Double {
         let c = d.components

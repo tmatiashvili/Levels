@@ -32,17 +32,29 @@ public actor NWHubTransport: HubTransport {
     public func send(_ request: HTTPRequest, to pairing: HubPairing, me: DeviceID, timeout: Duration) async throws(HubError) -> HTTPResponse {
         var request = request
         request.headers[HubProtocol.deviceHeader] = me.recordName
-        if let kept, kept.hubID == pairing.hubID, kept.me == me, kept.connection.isUsable {
-            do {
-                return try await kept.connection.exchange(request, timeout: timeout)
-            } catch .notReady {
-                self.kept = nil  // the server closed the kept-alive connection; try a fresh one
+        if let current = kept {
+            if current.hubID == pairing.hubID, current.me == me, current.connection.isUsable {
+                do {
+                    return try await current.connection.exchange(request, timeout: timeout)
+                } catch .notReady {
+                    // The server closed the kept-alive connection; try a fresh one.
+                    if kept?.connection === current.connection { kept = nil }
+                }
+            } else if current.hubID != pairing.hubID || current.me != me || !current.connection.isAlive {
+                // Another pairing, or dead: close it. A live, busy one (the long-poll) stays.
+                current.connection.close()
+                if kept?.connection === current.connection { kept = nil }
             }
         }
         let connection = try await open(pairing: pairing, me: me)
-        let reusable = kept == nil || !(kept!.connection.isUsable)
-        if reusable { kept = (pairing.hubID, me, connection) }
-        defer { if !reusable { connection.close() } }
+        // Keep it only if nothing is kept now (checked after the await: the actor is
+        // reentrant). A second request while the long-poll holds the kept connection gets
+        // this short-lived one, closed when done; it never replaces the busy one.
+        if kept == nil {
+            kept = (pairing.hubID, me, connection)
+            return try await connection.exchange(request, timeout: timeout)
+        }
+        defer { connection.close() }
         return try await connection.exchange(request, timeout: timeout)
     }
 

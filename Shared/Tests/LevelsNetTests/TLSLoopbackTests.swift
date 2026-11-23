@@ -69,6 +69,18 @@ struct TLSLoopbackTests {
         await rig.listener.stop()
     }
 
+    /// Only "unknown key or identity" TLS answers mean the Mac forgot this iPhone; a closed or
+    /// aborted handshake is "not reachable" (it used to show "Forgot this iPhone").
+    @Test func onlyRefusalTLSStatusesMapToHandshakeRefused() {
+        for status: OSStatus in [-9864, -9820, -9846, -9824] {
+            #expect(HubClientConnection.map(.tls(status)) == .handshakeRefused)
+        }
+        for status: OSStatus in [-9806, -9816, -9800] {
+            #expect(HubClientConnection.map(.tls(status)) == .notReady)
+        }
+        #expect(HubClientConnection.map(.posix(.ECONNRESET)) == .notReady)
+    }
+
     @Test func AC1_unknownIdentityFails() async throws {
         let rig = try await rig()
         #expect(await connect(rig, identity: otherPhoneID.recordName, key: Self.phoneKey).failure == .handshakeRefused)

@@ -172,11 +172,11 @@ struct HubWidgetPlanTests {
         SnapshotFile(ownDeviceID: id(1), syncStatus: status, lastFetchAt: lastFetch, devices: [phone])
     }
 
-    @Test func AC8_goodFetchUsesItAndReloadsIn15Minutes() async {
+    @Test func AC8_goodFetchUsesItAndReloadsIn30Minutes() async {
         let fetched = SnapshotFile(ownDeviceID: id(1), syncStatus: .localOnly, lastFetchAt: now, devices: [phone, mac])
         let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in .fetched(fetched) }
         #expect(plan.outcome == .fetched && plan.snapshot == fetched)
-        #expect(plan.reloadAt == now + 15 * 60)
+        #expect(plan.reloadAt == now + 30 * 60)  // inside the WidgetKit budget
     }
 
     @Test func AC8_failedFetchUsesCacheMarkedAwayAndReloadsIn60Minutes() async {
@@ -190,7 +190,14 @@ struct HubWidgetPlanTests {
         let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 60), now: now) { _ in
             Issue.record("fetched"); return .failed
         }
-        #expect(plan.outcome == .cacheFresh && plan.reloadAt == now - 60 + 15 * 60)
+        #expect(plan.outcome == .cacheFresh && plan.reloadAt == now - 60 + 30 * 60)
+    }
+
+    @Test func macErrorKeepsCacheNotAwayAndRetriesOnTheNormalSchedule() async {
+        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in .macError }
+        #expect(plan.outcome == .macError)
+        #expect(plan.snapshot?.syncStatus == .localOnly)
+        #expect(plan.reloadAt == now + 30 * 60)
     }
 
     @Test func notPairedOrNoFetchIsVariantA() async {
