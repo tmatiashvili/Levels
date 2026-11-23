@@ -58,6 +58,87 @@ struct LevelsWidgetKitTests {
         #expect(entries.allSatisfy { $0.rows.count == 1 })
     }
 
+    // MARK: systemLarge (UI-003 R3, R4, AC3; UI-004 R11)
+
+    @Test func AC3_tenDevicesShowEightRowsAndTwoMoreInListOrder() {
+        let devices = (1...10).map { d($0, $0 == 1 ? .mac : .iphone, "D\($0)", 100 - $0 * 5) }
+        let e = entry(devices)
+        let list = e.largeList
+        #expect(list.shown.count == 8)
+        #expect(list.moreCount == 2)
+        #expect(list.shown.map(\.id) == Array(e.rows.prefix(8)).map(\.id))
+        #expect(list.shown.first?.isThisDevice == true)  // UI-001 order: this device first
+    }
+
+    @Test func largeShowsAllWhenEightOrFewer() {
+        let e = entry((1...8).map { d($0, .iphone, "D\($0)", 50) })
+        #expect(e.largeList.shown.count == 8 && e.largeList.moreCount == 0)
+        let one = entry([d(1, .mac, "Mac", 66)])
+        #expect(one.largeList.shown.count == 1 && one.largeList.moreCount == 0)
+        #expect(one.isOnlyThisDevice)
+    }
+
+    @Test func largeKeepsStaleAndNoBatteryRowsAndDropsHidden() {
+        let e = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: [
+            d(1, .mac, "Mac", nil), d(2, .iphone, "iPhone", 40, age: 5 * 3600), d(3, .watch, "Watch", 30)]),
+            preferences: DisplayPreferences(hidden: [id(3)]))
+        let shown = e.largeList.shown
+        #expect(shown.map(\.name) == ["Mac", "iPhone"])
+        #expect(shown[1].freshness(at: now) == .stale)
+        #expect(!e.isOnlyThisDevice)
+    }
+
+    @Test func largeListEmptyWithoutCache() {
+        let e = DeviceEntry(date: now, snapshot: nil, preferences: DisplayPreferences())
+        #expect(e.largeList == LargeList(rows: []))
+        #expect(e.largeList.moreCount == 0)
+    }
+
+    @Test func macOffersLargeFamily() {
+        #expect(LevelsDevicesWidget.families == [.systemSmall, .systemMedium, .systemLarge])
+    }
+
+    // MARK: Configuration (UI-003 R1, AC2, AC9; UI-004 R12)
+
+    @Test func AC2_configuredDeviceWinsOverLowest() {
+        let e = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: [
+            d(1, .mac, "Mac", 10), d(2, .iphone, "iPhone", 40), d(3, .watch, "Watch", 90)]),
+            preferences: DisplayPreferences(), selection: id(3))
+        #expect(e.singleDevice(excludingThisDevice: true)?.name == "Watch")
+    }
+
+    @Test func configuredThisMacIsShown() {
+        let e = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: [
+            d(1, .mac, "Mac", 90), d(2, .iphone, "iPhone", 40)]), preferences: DisplayPreferences(), selection: id(1))
+        #expect(e.singleDevice(excludingThisDevice: true)?.name == "Mac")
+    }
+
+    @Test func hiddenOrDeletedSelectionFallsBackToLowest() {
+        let devices = [d(1, .mac, "Mac", 10), d(2, .iphone, "iPhone", 40), d(3, .watch, "Watch", 30)]
+        let hidden = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: devices),
+                                 preferences: DisplayPreferences(hidden: [id(2)]), selection: id(2))
+        #expect(hidden.singleDevice(excludingThisDevice: true)?.name == "Watch")
+        let gone = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: devices),
+                               preferences: DisplayPreferences(), selection: id(9))
+        #expect(gone.singleDevice(excludingThisDevice: true)?.name == "Watch")
+    }
+
+    @Test func AC9_choicesAreLowestThenShownRowsIncludingThisMac() {
+        let e = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: [
+            d(1, .mac, "Mac", 66), d(2, .iphone, "iPhone", 40), d(3, .watch, "Watch", 30)]),
+            preferences: DisplayPreferences(hidden: [id(2)]))
+        let choices = DeviceChoiceQuery.choices(rows: e.rows)
+        #expect(choices.map(\.id) == [DeviceChoice.lowestID, id(1).recordName, id(3).recordName])
+        #expect(choices[0].deviceID == nil)
+        #expect(choices[1].deviceID == id(1))
+    }
+
+    @Test func timelineEntriesCarryTheSelection() {
+        let entries = DevicesTimeline.entries(snapshot: SnapshotFile(ownDeviceID: id(1), devices: [d(1, .mac, "Mac", 66)]),
+                                              preferences: DisplayPreferences(), now: now, selection: id(1))
+        #expect(entries.allSatisfy { $0.selection == id(1) })
+    }
+
     @Test func deviceURL() {
         #expect(LevelsAppConfig.deviceURL(id(2)).absoluteString == "levels://device/00000000-0000-0000-0000-000000000002")
     }

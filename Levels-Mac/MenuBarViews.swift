@@ -44,8 +44,10 @@ struct DeviceWindowView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
+        let ideal = Self.idealSize(rows: model.store.rows.count)
         DevicesPanel(highlighted: model.highlighted)
-            .frame(minWidth: 320, idealWidth: 380, minHeight: 240, idealHeight: 420)
+            .frame(minWidth: Self.minSize.width, idealWidth: ideal.width,
+                   minHeight: Self.minSize.height, idealHeight: ideal.height)
             .onOpenURL { url in
                 _ = model.handle(url)
                 NSApp.activate()
@@ -56,6 +58,15 @@ struct DeviceWindowView: View {
                 openSettingsIfRequested()
             }
             .onChange(of: model.settingsRequested) { openSettingsIfRequested() }
+    }
+
+    /// Smallest useful window: one row plus the footer, popover width (UI-004 R6).
+    static let minSize = CGSize(width: 320, height: 160)
+
+    /// First-open size: the popover's size for the current rows, a little wider for the
+    /// window chrome (UI-004 R6, MAC-001 R2a). Later opens keep the user's size.
+    static func idealSize(rows: Int) -> CGSize {
+        CGSize(width: 360, height: max(minSize.height, MenuBarPopover.height(rows: rows)))
     }
 
     /// R5: Settings opens only from SwiftUI, once per request.

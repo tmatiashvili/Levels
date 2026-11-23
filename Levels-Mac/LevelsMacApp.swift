@@ -28,6 +28,13 @@ struct LevelsMacApp: App {
         }
         .handlesExternalEvents(matching: ["levels"])
         .defaultLaunchBehavior(.suppressed)
+        // Sized to its content like the popover (UI-004 R6): the first open uses the view's
+        // ideal size; after that SwiftUI restores the size the user left it at. Resizable,
+        // never smaller than the content's minimum.
+        .windowResizability(.contentMinSize)
+        .defaultWindowPlacement { content, _ in
+            WindowPlacement(size: content.sizeThatFits(.unspecified))
+        }
 
         Settings {
             MacSettingsView()

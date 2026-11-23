@@ -7,16 +7,19 @@ import LevelsUI
 import SwiftUI
 import WidgetKit
 
-/// One widget timeline entry (UI-003 Design, without the configuration choice for now).
+/// One widget timeline entry (UI-003 Design).
 public struct DeviceEntry: TimelineEntry, Sendable {
     public let date: Date
     /// `nil` = no cache yet ("Open Levels to start", ADR-0017 §6).
     public let snapshot: SnapshotFile?
     public let rows: [DeviceRowModel]
+    /// The configured device (UI-003 R1); `nil` = "Lowest battery".
+    public let selection: DeviceID?
 
-    public init(date: Date, snapshot: SnapshotFile?, preferences: DisplayPreferences) {
+    public init(date: Date, snapshot: SnapshotFile?, preferences: DisplayPreferences, selection: DeviceID? = nil) {
         self.date = date
         self.snapshot = snapshot
+        self.selection = selection
         rows = snapshot.map {
             DeviceRows(devices: $0.devices, thisDeviceID: $0.ownDeviceID, preferences: preferences, now: date).rows
         } ?? []
@@ -30,8 +33,34 @@ public struct DeviceEntry: TimelineEntry, Sendable {
             ?? (excludingThisDevice ? MenuBarLabelModel.lowest(rows, now: date) : nil)
     }
 
+    /// What a single-device family shows: the configured device while it is still shown,
+    /// else "Lowest battery" (UI-003 R1, edge case "selected device later hidden or deleted").
+    public func singleDevice(excludingThisDevice: Bool) -> DeviceRowModel? {
+        if let selection, let row = rows.first(where: { $0.id == selection }) { return row }
+        return lowest(excludingThisDevice: excludingThisDevice) ?? rows.first
+    }
+
+    /// `systemLarge` content (UI-003 R3, R4, R8).
+    public var largeList: LargeList { LargeList(rows: rows) }
+
+    /// True when the only shown device is this one (UI-003 R8 "Other devices appear…").
+    public var isOnlyThisDevice: Bool { rows.count == 1 && rows[0].isThisDevice }
+
     public var isICloudOff: Bool {
         snapshot?.syncStatus == .signedOut || snapshot?.syncStatus == .restricted
+    }
+}
+
+/// `systemLarge` rows: up to ``limit`` in UI-001 order, then "+N more" (UI-003 R3, AC3). Pure.
+public struct LargeList: Equatable, Sendable {
+    public static let limit = 8
+    public let shown: [DeviceRowModel]
+    /// Rows left out; "+N more" when > 0.
+    public let moreCount: Int
+
+    public init(rows: [DeviceRowModel], limit: Int = LargeList.limit) {
+        shown = Array(rows.prefix(limit))
+        moreCount = max(0, rows.count - limit)
     }
 }
 
@@ -58,35 +87,36 @@ public enum DevicesTimeline {
     }
 
     /// Builds the entries for one snapshot.
-    public static func entries(snapshot: SnapshotFile?, preferences: DisplayPreferences, now: Date) -> [DeviceEntry] {
-        let first = DeviceEntry(date: now, snapshot: snapshot, preferences: preferences)
+    public static func entries(snapshot: SnapshotFile?, preferences: DisplayPreferences, now: Date,
+                               selection: DeviceID? = nil) -> [DeviceEntry] {
+        let first = DeviceEntry(date: now, snapshot: snapshot, preferences: preferences, selection: selection)
         return entryDates(rows: first.rows, now: now).map {
-            $0 == now ? first : DeviceEntry(date: $0, snapshot: snapshot, preferences: preferences)
+            $0 == now ? first : DeviceEntry(date: $0, snapshot: snapshot, preferences: preferences, selection: selection)
         }
     }
 }
 
 /// Reads the cache synchronously from the App Group named in the extension's Info.plist.
-public struct DevicesProvider: TimelineProvider {
+public struct DevicesProvider: AppIntentTimelineProvider {
     public init() {}
 
-    static func load(now: Date) -> [DeviceEntry] {
+    static func load(now: Date, selection: DeviceID? = nil) -> [DeviceEntry] {
         let group = LevelsAppConfig.appGroupID
         let snapshot = group.flatMap(SnapshotCache.init(appGroupID:))?.read()
         let prefs = UserDefaultsDisplayPreferencesStore(suiteName: group).load()
-        return DevicesTimeline.entries(snapshot: snapshot, preferences: prefs, now: now)
+        return DevicesTimeline.entries(snapshot: snapshot, preferences: prefs, now: now, selection: selection)
     }
 
     public func placeholder(in context: Context) -> DeviceEntry { Self.sample(now: .now) }
 
-    public func getSnapshot(in context: Context, completion: @escaping (DeviceEntry) -> Void) {
-        completion(context.isPreview ? Self.sample(now: .now) : Self.load(now: .now)[0])
+    public func snapshot(for configuration: SelectDeviceIntent, in context: Context) async -> DeviceEntry {
+        context.isPreview ? Self.sample(now: .now) : Self.load(now: .now, selection: configuration.device?.deviceID)[0]
     }
 
-    public func getTimeline(in context: Context, completion: @escaping (Timeline<DeviceEntry>) -> Void) {
+    public func timeline(for configuration: SelectDeviceIntent, in context: Context) async -> Timeline<DeviceEntry> {
         let now = Date()
-        let entries = Self.load(now: now)
-        completion(Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now)))
+        let entries = Self.load(now: now, selection: configuration.device?.deviceID)
+        return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
     }
 
     /// Gallery and placeholder data, never the cache (UI-003 Design).
@@ -104,13 +134,13 @@ public struct DevicesProvider: TimelineProvider {
 }
 
 /// The device widget (kind `"LevelsDevices"`). Families and the "Lowest battery" rule follow
-/// the platform: on the Mac `systemSmall` and `systemMedium` (UI-004 R11, `systemLarge` not
-/// yet) and the small default excludes this Mac (UI-004 R12).
+/// the platform: on the Mac `systemSmall`, `systemMedium` and `systemLarge` (UI-004 R11) and
+/// the small default excludes this Mac (UI-004 R12).
 public struct LevelsDevicesWidget: Widget {
     public static let kind = "LevelsDevices"
 
     #if os(macOS)
-    public static let families: [WidgetFamily] = [.systemSmall, .systemMedium]
+    public static let families: [WidgetFamily] = [.systemSmall, .systemMedium, .systemLarge]
     static let excludesThisDeviceFromLowest = true
     #else
     public static let families: [WidgetFamily] = [.systemSmall, .systemMedium]
@@ -120,7 +150,7 @@ public struct LevelsDevicesWidget: Widget {
     public init() {}
 
     public var body: some WidgetConfiguration {
-        StaticConfiguration(kind: Self.kind, provider: DevicesProvider()) { entry in
+        AppIntentConfiguration(kind: Self.kind, intent: SelectDeviceIntent.self, provider: DevicesProvider()) { entry in
             DevicesWidgetView(entry: entry, excludesThisDeviceFromLowest: Self.excludesThisDeviceFromLowest)
                 .containerBackground(.fill.tertiary, for: .widget)  // UI-003 R10
         }
@@ -148,6 +178,10 @@ public struct DevicesWidgetView: View {
             switch family {
             case .systemMedium:
                 MediumDevicesView(entry: entry)
+            #if !os(watchOS)
+            case .systemLarge:
+                LargeDevicesView(entry: entry)
+            #endif
             default:
                 SmallDeviceView(entry: entry, excludesThisDevice: excludesThisDeviceFromLowest)
             }
@@ -178,7 +212,7 @@ struct SmallDeviceView: View {
     let excludesThisDevice: Bool
 
     var body: some View {
-        if let row = entry.lowest(excludingThisDevice: excludesThisDevice) ?? entry.rows.first {
+        if let row = entry.singleDevice(excludingThisDevice: excludesThisDevice) {
             let stale = row.freshness(at: entry.date) == .stale
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
@@ -231,6 +265,97 @@ struct MediumDevicesView: View {
     /// Builder's call (UI-003 Design): the first word of the name.
     static func shortName(_ name: String) -> String {
         name.split(separator: " ").first.map(String.init) ?? name
+    }
+}
+
+/// `systemLarge`: up to 8 devices as rows (symbol + name, bar + %, age), UI-001 order, "+N more"
+/// when cut (UI-003 R3, R4). Each row is a `Link` to its device (UI-003 R7, UI-004 R14).
+public struct LargeDevicesView: View {
+    let entry: DeviceEntry
+
+    public init(entry: DeviceEntry) { self.entry = entry }
+
+    public var body: some View {
+        let list = entry.largeList
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                Text("Battery Levels").font(.caption.weight(.semibold))
+                Spacer(minLength: 0)
+                if entry.isICloudOff {  // UI-003 R8: badge plus the cached rows
+                    Label(String(localized: "iCloud off"), systemImage: "icloud.slash")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.bottom, 6)
+            ForEach(list.shown) { row in
+                Link(destination: LevelsAppConfig.deviceURL(row.id)) {
+                    LargeDeviceRow(row: row, now: entry.date)
+                }
+                if row.id != list.shown.last?.id { Divider() }
+            }
+            if list.moreCount > 0 {
+                Text(String(localized: "+\(list.moreCount) more"))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .padding(.top, 4)
+            } else if entry.isOnlyThisDevice {
+                Text(String(localized: "Other devices appear when they run Levels"))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .padding(.top, 6)
+            }
+            Spacer(minLength: 0)
+        }
+        .widgetURL(LevelsAppConfig.listURL)  // taps outside a row open the list
+    }
+}
+
+/// One `systemLarge` row: compact form of the UI-001 row, with the widget age text (ADR-0017).
+struct LargeDeviceRow: View {
+    let row: DeviceRowModel
+    let now: Date
+
+    var body: some View {
+        let stale = row.freshness(at: now) == .stale
+        HStack(spacing: 8) {
+            DeviceSymbol(row: row).widgetAccentable().frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.name).font(.caption.weight(.medium)).lineLimit(1)
+                AgeLine(date: row.readingDate(now: now), stale: stale)
+            }
+            Spacer(minLength: 6)
+            if let level = row.level {
+                HStack(spacing: 5) {
+                    if row.isLow { Text(RowText.low()).font(.caption2.bold()).foregroundStyle(.red) }
+                    if row.showsChargingBolt(at: now) { Image(systemName: "bolt.fill").font(.caption2).foregroundStyle(.green) }
+                    LevelBar(level: level, isLow: row.isLow).frame(width: 64, height: 6)
+                    Text(RowText.percent(level)).font(.caption.weight(.semibold)).monospacedDigit()
+                        .frame(minWidth: 34, alignment: .trailing)
+                }
+                .opacity(stale ? 0.5 : 1)  // UI-001 R6
+            } else {
+                Text(RowText.noBattery()).font(.caption2).foregroundStyle(.secondary)  // UI-001 R5a
+            }
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(RowText.accessibilityLabel(for: row, now: now))
+    }
+}
+
+/// Horizontal capacity bar for `systemLarge` rows; the fill is accentable (UI-003 R9).
+struct LevelBar: View {
+    let level: Int
+    let isLow: Bool
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.quaternary)
+                Capsule().fill(isLow ? Color.red : Color.green)
+                    .frame(width: max(geo.size.height, geo.size.width * CGFloat(min(max(level, 0), 100)) / 100))
+                    .widgetAccentable()
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
