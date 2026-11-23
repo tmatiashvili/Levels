@@ -313,6 +313,13 @@ public final class PairingWindow: Sendable {
         return false
     }
 
+    /// True from the moment the window opens until pairing ends (open, confirming or matched).
+    /// The listener must keep running for all of these, or the confirm step can't arrive.
+    public var isInProgress: Bool {
+        if case .closed = state { return false }
+        return true
+    }
+
     /// The `pair` PSK while the window is open and no device has revealed its key yet;
     /// `nil` otherwise (R2, AC3, AC5).
     public var codeKey: SymmetricKey? {

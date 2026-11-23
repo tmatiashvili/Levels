@@ -177,6 +177,21 @@ struct PairingWindowTests {
         return response
     }
 
+    /// Regression (owner's first pairing, 2026-11-24): the hub stopped its listener once the window
+    /// left `.open`, which cancelled the pairing while the owner compared the numbers.
+    @Test func windowStaysInProgressWhileConfirmingAndMatched() throws {
+        let (window, _, _) = make()
+        #expect(!window.isInProgress)
+        window.open(hub: hubInfo)
+        #expect(window.isInProgress)
+        _ = try window.accept(request())
+        try window.reveal(reveal)
+        #expect(!window.isOpen)
+        #expect(window.isInProgress)
+        #expect(window.approve())
+        #expect(window.isInProgress)
+    }
+
     @Test func openGivesCodeAndPairKey() {
         let (window, _, _) = make()
         let code = window.open(hub: hubInfo)

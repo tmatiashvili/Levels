@@ -118,13 +118,13 @@ import os
 
     private func applyRule() async {
         paired = store.all()
-        let shouldRun = reporting.isEnabled && sharingEnabled && (!paired.isEmpty || window.isOpen)
+        let shouldRun = reporting.isEnabled && sharingEnabled && (!paired.isEmpty || window.isInProgress)
         let running = await listener.isRunning
         if shouldRun {
             if running {
                 await listener.reload()
                 status = .sharing
-            } else if status != .failed || window.isOpen {
+            } else if status != .failed || window.isInProgress {
                 await startListener()
             }
         } else {
