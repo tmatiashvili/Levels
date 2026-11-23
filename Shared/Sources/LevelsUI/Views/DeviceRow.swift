@@ -17,12 +17,25 @@ public struct DeviceRow: View {
 
     private var isStale: Bool { row.freshness(at: now) == .stale }
 
+    /// Ring size in a single row: fits the two text lines, so a row stays about 44 pt tall.
+    static let ringSize: CGFloat = 28
+
+    /// macOS shows "This Mac" in the age line, so the tag never truncates the name.
+    private static var tagsInAgeLine: Bool {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }
+
     public var body: some View {
         Group {
             if Self.isStacked(dynamicTypeSize) {
                 VStack(alignment: .leading, spacing: 6) {
                     title
                     HStack(alignment: .center, spacing: 8) { levelArea }
+                        .frame(minHeight: Self.ringSize)  // R10: room for the ring at large sizes
                     age
                 }
             } else {
@@ -46,7 +59,7 @@ public struct DeviceRow: View {
                 .frame(minWidth: 24)
             Text(row.name)
                 .lineLimit(Self.isStacked(dynamicTypeSize) ? nil : 1)
-            if row.isThisDevice {
+            if row.isThisDevice && !Self.tagsInAgeLine {
                 Text("This device", bundle: .module)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -56,6 +69,10 @@ public struct DeviceRow: View {
 
     private var age: some View {
         HStack(spacing: 4) {
+            if row.isThisDevice && Self.tagsInAgeLine {
+                Text("This Mac", bundle: .module)
+                Text(verbatim: "·").accessibilityHidden(true)
+            }
             AgeText(updatedAt: row.readingDate(now: now), now: now)
             if isStale { Image(systemName: "clock").accessibilityHidden(true) }
         }
@@ -79,7 +96,8 @@ public struct DeviceRow: View {
     }
 }
 
-/// Ring, percentage, "Low", bolt and leaf for one level (R5–R7). Dimmed when stale (R6).
+/// Ring, percentage, "Low", bolt and leaf for one level (R5–R7). When stale (R6) the ring is
+/// dimmed and the text turns secondary, so it keeps its contrast.
 struct LevelView: View {
     let level: Int
     let isCharging: Bool
@@ -89,18 +107,18 @@ struct LevelView: View {
     var body: some View {
         let low = DeviceRowModel.isLow(level)
         HStack(spacing: 6) {
-            BatteryRing(level: level, isCharging: isCharging, isLow: low)
-                .frame(width: 36, height: 36)
+            BatteryRing(level: level, isCharging: isCharging, isLow: low, size: DeviceRow.ringSize)
+                .opacity(isStale ? 0.45 : 1)
             Text(RowText.percent(level))
                 .monospacedDigit()
+                .foregroundStyle(isStale ? .secondary : .primary)
                 .fixedSize()  // R10: the level never truncates
             if low {
                 Text(RowText.low()).font(.caption.bold()).foregroundStyle(.red).fixedSize()
             }
             if isCharging { Image(systemName: "bolt.fill").foregroundStyle(.green) }
-            if isLowPowerMode { Image(systemName: "leaf.fill").foregroundStyle(.yellow) }
+            if isLowPowerMode { Image(systemName: "leaf.fill").foregroundStyle(.orange) }
         }
-        .opacity(isStale ? 0.45 : 1)
     }
 }
 
@@ -117,17 +135,17 @@ struct ComponentLevel: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             if let level = record.level {
-                BatteryRing(level: level, isCharging: record.isCharging && !stale, isLow: low)
-                    .frame(width: 30, height: 30)
+                BatteryRing(level: level, isCharging: record.isCharging && !stale, isLow: low, size: 24)
+                    .opacity(stale ? 0.45 : 1)
                 HStack(spacing: 2) {
                     Text(RowText.percent(level)).font(.caption).monospacedDigit().fixedSize()
+                        .foregroundStyle(stale ? .secondary : .primary)
                     if low { Text(RowText.low()).font(.caption2.bold()).foregroundStyle(.red).fixedSize() }
-                    if stale { Image(systemName: "clock").font(.caption2) }
+                    if stale { Image(systemName: "clock").font(.caption2).foregroundStyle(.secondary) }
                 }
             } else {
-                Text(verbatim: "–").font(.caption)
+                Text(verbatim: "–").font(.caption).foregroundStyle(.secondary)
             }
         }
-        .opacity(stale ? 0.45 : 1)
     }
 }

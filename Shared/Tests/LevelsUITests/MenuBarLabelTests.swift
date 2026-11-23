@@ -24,15 +24,21 @@ struct MenuBarLabelTests {
         #expect(c.text == "(40%)")
     }
 
-    @Test func AC3_noOtherDevices_localOnlyShowsThisMac() {
+    @Test func AC3_noOtherDevices_appSymbolOnly() {
+        // This Mac's own level is never shown: macOS has its own battery item (R3).
         let c = label([mac])
-        #expect(c.symbol == "battery.75percent")
-        #expect(c.text == "76%")
-        #expect(c.accessibilityLabel == "Levels: MacBook Pro, 76 percent")
-        // A desktop Mac with no battery: app symbol only (R3).
+        #expect(c.symbol == MenuBarLabelModel.appSymbol && c.text == nil)
+        #expect(c.accessibilityLabel == "Levels")
+        let charging = label([device(id(1), .mac, "MacBook Pro", level: 50, charging: true)])
+        #expect(charging.symbol == MenuBarLabelModel.appSymbol && charging.text == nil)
         let desk = label([device(id(1), .mac, "Mac mini", level: nil)])
         #expect(desk.symbol == MenuBarLabelModel.appSymbol && desk.text == nil)
-        #expect(label([]).text == nil)
+        #expect(label([]).symbol == MenuBarLabelModel.appSymbol && label([]).text == nil)
+    }
+
+    @Test func otherDeviceWithoutLevel_appSymbolOnly() {
+        let c = label([mac, device(id(4), .mac, "Mac mini", level: nil)])
+        #expect(c.symbol == MenuBarLabelModel.appSymbol && c.text == nil)
     }
 
     @Test func AC4_iconOnly() {
@@ -42,11 +48,6 @@ struct MenuBarLabelTests {
 
     @Test func AC8_accessibilityLabel() {
         #expect(label([mac, phone]).accessibilityLabel == "Levels: iPhone, 18 percent")
-    }
-
-    @Test func chargingThisMacShowsBolt() {
-        let c = label([device(id(1), .mac, "MacBook Pro", level: 50, charging: true)])
-        #expect(c.symbol == "battery.100percent.bolt")
     }
 
     @Test func noBatteryDeviceNeverChosen() {

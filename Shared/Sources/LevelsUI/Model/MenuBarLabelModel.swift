@@ -24,9 +24,8 @@ public enum MenuBarLabelModel {
     /// - R1: the lowest **other** device (UI-003 R2: among fresh ones, else among all;
     ///   `level == nil` never chosen), as its symbol and "18%".
     /// - R2: stale → "(18%)".
-    /// - R3: no other device → app symbol only, except (local-only build, owner decision K)
-    ///   when this device has a level: then this device's battery symbol and level, so the
-    ///   free-team build still shows something useful. Brief deviation from R3, see SETUP.md.
+    /// - R3: no other device → app symbol only. This device's level is never shown: macOS
+    ///   already shows its own battery item. Holds in the local-only build too (decision K).
     /// - R4: `.iconOnly` → app symbol whatever the data.
     public static func content(rows: [DeviceRowModel], mode: MenuBarMode, now: Date,
                                locale: Locale = .current) -> MenuBarLabelContent {
@@ -36,10 +35,6 @@ public enum MenuBarLabelModel {
         if let pick = lowest(others, now: now) {
             return content(for: pick, symbol: DeviceSymbol.symbolName(kind: pick.kind, accessoryKind: pick.accessoryKind,
                                                                       hasBattery: true),
-                           now: now, locale: locale)
-        }
-        if let me = rows.first(where: \.isThisDevice), let level = me.level {
-            return content(for: me, symbol: batterySymbol(level: level, charging: me.showsChargingBolt(at: now)),
                            now: now, locale: locale)
         }
         return iconOnly
@@ -53,18 +48,6 @@ public enum MenuBarLabelModel {
         return pool.min { a, b in
             if a.level! != b.level! { return a.level! < b.level! }
             return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
-        }
-    }
-
-    /// `battery.0percent` … `battery.100percent` in 25 % steps; `battery.100percent.bolt` while charging.
-    public static func batterySymbol(level: Int, charging: Bool) -> String {
-        if charging { return "battery.100percent.bolt" }
-        switch level {
-        case ..<13: return "battery.0percent"
-        case ..<38: return "battery.25percent"
-        case ..<63: return "battery.50percent"
-        case ..<88: return "battery.75percent"
-        default: return "battery.100percent"
         }
     }
 

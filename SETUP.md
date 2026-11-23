@@ -42,13 +42,13 @@ xcodebuild -project Levels.xcodeproj -scheme Levels-Mac -configuration Debug -al
 
 The Mac app works today on the free team, local only: it shows this Mac's own battery in the menu bar, the popover and a desktop widget. Nothing syncs between devices yet.
 
-1. **Get the app.** Either open `Levels.xcodeproj` in Xcode, pick the `Levels-Mac` scheme and "My Mac", and press ⌘R; or double-click a built copy (for example `~/Desktop/Levels-try/Levels.app`). There is no Dock icon: look for a battery symbol with a percentage in the menu bar.
+1. **Get the app.** Either open `Levels.xcodeproj` in Xcode, pick the `Levels-Mac` scheme and "My Mac", and press ⌘R; or double-click a built copy (for example `~/Desktop/Levels-try/Levels.app`). There is no Dock icon: look for a full-battery symbol in the menu bar (with no other devices it shows no percentage).
 2. **First launch** turns on Open at login (MAC-001 R6). Turn it off in Levels → ⋯ → Settings… if you don't want it.
 3. **Use it.** Click the menu-bar item for the list; ⟳ or ⌘R refreshes. ⋯ has Settings, About and Quit. If the menu-bar item is hidden, open Levels again from Finder: Settings comes up.
 4. **Add the widget.** Right-click the desktop → Edit Widgets…, search "Levels", drag the small or medium "Battery Levels" widget onto the desktop. Clicking it opens the Levels device window.
 5. **Rebuild every week.** The free profile lasts 7 days. After that the app may stop launching: build again in Xcode (⌘B or ⌘R) and, if you use a copy, replace it with the new `Levels.app`.
 
-What the free build does not do yet: other devices (needs iCloud), push, and a widget device picker. The menu-bar label shows this Mac's level because there are no other devices; with other devices it shows the lowest of them (UI-004 R1).
+What the free build does not do yet: other devices (needs iCloud), push, and a widget device picker. With no other devices the menu-bar label is the app symbol only (UI-004 R3), so it doesn't repeat the macOS battery item; with other devices it shows the lowest of them (UI-004 R1).
 
 Check it worked: `log show --predicate 'subsystem BEGINSWITH "com.tmatiashvili"' --last 2m` shows `Report launch: <name> level=63 …` and, in Debug builds, the `snapshot.json` it wrote; compare with `pmset -g batt`. Terminal can't read `~/Library/Group Containers/<TEAMID>.com.tmatiashvili.levels/` directly (macOS protects other apps' group containers), which is why the Debug log prints the file.
 
