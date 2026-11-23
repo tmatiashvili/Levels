@@ -20,7 +20,7 @@ iPhone's built-in Batteries widget shows only the iPhone and accessories paired 
  ┌──────────────────────────────────────────────────┐
  │        CloudKit private DB (one record/device)   │
  └──────────────────────────────────────────────────┘
-     │ silent push (CKQuerySubscription) on any change
+     │ silent push (CKDatabaseSubscription) on any change
      ▼
  every device → reload widgets / complications / menu bar
 ```
@@ -58,7 +58,7 @@ func readBattery() -> (pct: Int, charging: Bool)? {
   - `level` (0–100), `isCharging`, `isLowPowerMode`
   - `updatedAt`
 - Overwrite your own record on change, saving at most about once a minute.
-- A `CKQuerySubscription` on `DeviceBattery` sends a silent push. The receiver refreshes its cache and calls `WidgetCenter.shared.reloadAllTimelines()`.
+- A `CKDatabaseSubscription` on the private database (records live in the custom `Levels` zone) sends a silent push. The receiver refreshes its cache and calls `WidgetCenter.shared.reloadAllTimelines()`.
 - An App Group shared container caches the latest snapshot so widgets render instantly.
 
 ### Nearby mode (optional, later)
@@ -69,7 +69,7 @@ Over Bluetooth LE, the Mac advertises a custom GATT service with a battery chara
 
 - Shared SwiftUI view package used by every target.
 - **iOS / iPadOS:** app, Home Screen widgets (small / medium / large) and lock-screen widgets (`.accessoryCircular` with `Gauge`).
-- **macOS:** menu-bar app (`LSUIElement`), registered as a login item via `SMAppService.mainApp.register()`, plus desktop widgets.
+- **macOS:** menu-bar app (`LSUIElement`), shipped outside the Mac App Store with Developer ID and notarization (ADR-0013), registered as a login item via `SMAppService.mainApp.register()`, plus desktop widgets.
 - **watchOS:** app and complications.
 - Always show "updated X min ago" so stale values are obvious.
 
@@ -94,8 +94,15 @@ Levels/
 ├── Levels-Watch/  # watchOS app
 ├── Widgets-iOS/       # WidgetKit extension (home + lock screen)
 ├── Widgets-Mac/       # WidgetKit extension (desktop)
-└── Complications/     # watchOS widgets
+└── Widgets-Watch/     # watchOS widget extension: complications + Smart Stack
 ```
+
+## Docs
+
+- [Architecture decisions (ADRs)](docs/adr/README.md)
+- [Feature specs and build order](docs/specs/README.md)
+- [Glossary](docs/glossary.md)
+- [Decisions log](docs/decisions-log.md)
 
 ## Roadmap
 
