@@ -17,7 +17,6 @@ Plan about 60 minutes the first time: 30 for setup, 20 for the test, 10 for writ
 |---|---|
 | `PushCheck-iOS/SpikeConfig.swift`, `containerID` | `iCloud.<rdns>.levels` |
 | `PushCheck-iOS/PushCheck.entitlements`, container ID | `iCloud.<rdns>.levels` |
-| `PushCheck-iOS/PushCheck-Release.entitlements`, container ID | `iCloud.<rdns>.levels` |
 | `PushCheck-Mac/SpikeConfig.swift`, `containerID` | `iCloud.<rdns>.levels` |
 | `PushCheck-Mac/PushCheckMac.entitlements`, container ID | `iCloud.<rdns>.levels` |
 | Developer portal: iCloud container (step 1) | `iCloud.<rdns>.levels` |
@@ -56,6 +55,8 @@ Xcode with automatic signing can also create these for you. Doing it here first 
 
 Make the Xcode projects **outside the repo**, for example in `~/Desktop/SpikeProjects`. Only this `Spike/` folder is kept in git.
 
+How Xcode 26 handles files: a new project uses a **synchronized folder** (the blue folder icon in the left sidebar). Every file you put in that folder on disk is part of the app. So you add files by copying them into the folder in Finder. Xcode picks them up by itself. If you drag files onto the sidebar instead, a dialog opens: set **Action** to **Copy files to destination** and tick the target.
+
 ## Part C: the Mac project
 
 1. Xcode → File → New → Project → **macOS** → **App** → Next.
@@ -71,11 +72,13 @@ Make the Xcode projects **outside the repo**, for example in `~/Desktop/SpikePro
    - App Sandbox is already there. Under Network, tick **Outgoing Connections (Client)**.
    - Press **+ Capability** → **iCloud**. Tick **CloudKit**. Under Containers, tick `iCloud.<rdns>.levels` (press **+** to add it if it isn't listed).
    - Xcode has now made a file `PushCheckMac.entitlements`.
+   - A **Push Notifications** line may also appear in Signing & Capabilities. Ignore it. The Mac app doesn't need push, and our entitlements file has no push entry.
 7. In Finder, open `~/Desktop/SpikeProjects/PushCheckMac/PushCheckMac/`. Copy `Spike/PushCheck-Mac/PushCheckMac.entitlements` from the repo into it. Choose **Replace**.
 8. In Xcode's left sidebar, right-click `ContentView.swift` → Delete → Move to Trash. Do the same for `PushCheckMacApp.swift`.
-9. Drag the four `.swift` files from `Spike/PushCheck-Mac/` onto the yellow `PushCheckMac` folder in the sidebar. Tick **Copy files** and the **PushCheckMac** target. Finish.
+9. In Finder, copy the four `.swift` files from `Spike/PushCheck-Mac/` into the same folder `~/Desktop/SpikeProjects/PushCheckMac/PushCheckMac/`. Xcode shows them in the sidebar by itself.
 10. Check `<rdns>` is replaced in `SpikeConfig.swift` and in the entitlements file.
-11. Signing & Capabilities must show no red error. If Xcode added Push Notifications by itself, leave it.
+11. Signing & Capabilities must show no red error. A Push Notifications line without a matching entitlement is fine (step 6).
+12. Press **⌘R**. The window shows **Signed container environment**. It is read from the app's own signature. Green "Production" is what the test needs.
 
 ## Part D: deploy the schema to Production (ADR-0018 §6)
 
@@ -87,7 +90,7 @@ Skip this part if CloudKit Console → your container → **Production** → Sch
 
 1. In Xcode, open `PushCheckMac.entitlements`. Change `Production` to **`Development`**. Save. (Temporary.)
 2. Press **⌘R**. The Mac app opens. If macOS asks about iCloud or keychain access, allow it.
-3. Press **Write DeviceBattery record** once. The list shows `SETUP | zone Levels ready` and `WRITE | #1 saved`.
+3. Check the window says **Signed container environment: Development** (red). Press **Write DeviceBattery record** once. The list shows `SETUP | zone Levels ready` and `WRITE | #1 saved`.
 4. Open icloud.developer.apple.com → **CloudKit Database** → pick `iCloud.<rdns>.levels` → environment **Development** → Schema → **Record Types** → `DeviceBattery`. Check the fields:
    - Int64: `schemaVersion`, `level`, `isCharging`, `isPluggedIn`, `isLowPowerMode`
    - String: `deviceId`, `type`, `parentDeviceId`, `accessoryKind`, `accessoryGroupId`, `component`
@@ -96,7 +99,7 @@ Skip this part if CloudKit Console → your container → **Production** → Sch
 5. Back in the Mac app, press **Delete test record**.
 6. In CloudKit Console, press **Deploy Schema Changes…** (bottom left). Read the list. Press **Deploy**.
 7. Switch the Console to **Production** → Schema → Record Types. `DeviceBattery` is there with the same fields.
-8. In Xcode, change the entitlement back to **`Production`**. Save. Press **■** (Stop), then **⌘R** again.
+8. In Xcode, change the entitlement back to **`Production`**. Save. Press **■** (Stop), then **⌘R** again. The window must now say **Signed container environment: Production** (green).
 
 This spike needs no extra indexes. A database subscription and a zone fetch don't use them.
 
@@ -117,9 +120,9 @@ This spike needs no extra indexes. A database subscription and a zone fetch don'
    - `PushCheck.entitlements` (Debug: `aps-environment = development`, container environment `Production`)
    - `Info.plist` (`UIBackgroundModes = remote-notification`, plus `ITSAppUsesNonExemptEncryption = NO` for TestFlight)
    - If Xcode made no `Info.plist`: copy ours in anyway. Then Build Settings → search "Info.plist File" → set it to `PushCheck/Info.plist`.
-   - Don't copy `PushCheck-Release.entitlements` yet. It is only for Part H.
+   - Debug and Release both use this one entitlements file. For TestFlight, Xcode's export re-signs `aps-environment` to `production` (Part H checks this).
 8. Delete the template `ContentView.swift` and `PushCheckApp.swift` (right-click → Delete → Move to Trash).
-9. Drag the five `.swift` files from `Spike/PushCheck-iOS/` onto the yellow `PushCheck` folder. Tick **Copy files** and the **PushCheck** target.
+9. In Finder, copy the five `.swift` files from `Spike/PushCheck-iOS/` into `~/Desktop/SpikeProjects/PushCheck/PushCheck/`. Xcode shows them in the sidebar by itself.
 10. Check `<rdns>` is replaced in `SpikeConfig.swift` and in `PushCheck.entitlements`.
 11. At the top of Xcode, pick your iPhone as the run destination. Press **⌘R**.
 12. On the iPhone the app shows a log. Wait until you see all of these:
@@ -139,7 +142,7 @@ Before you start:
 
 1. iPhone: Low Power Mode **off** (Settings → Battery). Focus **off** (Control Center).
 2. iPhone and Mac: on Wi-Fi or mobile data, awake, both signed in to the same iCloud.
-3. Mac: the PushCheckMac app is running with the **Production** entitlement (Part D step 8).
+3. Mac: the PushCheckMac app is running and says **Signed container environment: Production** (Part D step 8).
 
 The run:
 
@@ -149,6 +152,9 @@ The run:
 7. Swipe up to go to the Home Screen. **Don't** swipe the app away in the app switcher (that is a force-quit, and iOS then drops pushes).
 8. Lock the iPhone with the side button. Leave it locked until step 13.
 9. On the Mac, press **Write DeviceBattery record**. Write #1. Start a 5-minute timer.
+   - While the timer runs, check the write reached **Production**. CloudKit Console → your container → **Production** → Records → Database **Private**, Zone **Levels** → look up the record by its name `5a1e7e57-0001-4001-8001-5b1ce0000001`. It must be there, with a fresh `updatedAt`.
+   - If it isn't there, the Mac is still on Development. Stop: fix Part D step 8 and start Part F again. Don't go on to the TestFlight check.
+   - If the Console refuses the lookup because `recordName` isn't queryable, skip this check. The green "Production" line in the Mac app is enough.
 10. When the timer ends (5 minutes or more), press the button again. Write #2. Start a new 5-minute timer.
 11. When it ends, press the button a third time. Write #3.
 12. Wait 5 more minutes.
@@ -175,15 +181,19 @@ This runs the same iPhone code as a TestFlight build, which uses `aps-environmen
 
 1. **Save the Debug log first** (Share or Copy). Installing from TestFlight replaces the app and its log.
 2. App Store Connect (appstoreconnect.apple.com) → Apps → **+** → New App. Platform iOS. Name: anything free, for example "Levels Push Check" (you can rename it later). Bundle ID: `<rdns>.levels`. SKU: `levels`. Create.
-3. Copy `Spike/PushCheck-iOS/PushCheck-Release.entitlements` into `~/Desktop/SpikeProjects/PushCheck/PushCheck/`. Fix `<rdns>` in it.
-4. Xcode → target PushCheck → Build Settings → search "Code Signing Entitlements". Click the arrow to show Debug and Release. Set **Release** to `PushCheck/PushCheck-Release.entitlements`. Leave Debug as it is.
-5. Run destination: **Any iOS Device (arm64)**. Product → **Archive**.
-6. In the Organizer window: **Distribute App** → **TestFlight Internal Only** → Distribute. Wait for the "ready to test" email (often 10–30 minutes).
-7. App Store Connect → your app → TestFlight → Internal Testing → add a group with yourself.
-8. On the iPhone, install the **TestFlight** app. Install PushCheck from it.
-9. Open PushCheck from the Home Screen. Wait for `SETUP | done` and `APNS | registered`.
-10. Repeat Part F steps 7 to 14 (background, lock, 3 Mac writes 5 minutes apart, wait, read).
-11. Decide:
+3. App icon (an upload without one is refused). In Xcode's sidebar open **Assets** → **AppIcon**. Drop any 1024×1024 PNG into the empty slot.
+4. Target PushCheck → **General** → Identity → **Build**. Raise the number before each upload (1, then 2, and so on). App Store Connect refuses a build number it has already seen.
+5. Run destination: **Any iOS Device (arm64)**. Product → **Archive**. The entitlements file stays the same (`development`).
+6. In the Organizer window: **Distribute App** → **TestFlight Internal Only** → Distribute. Xcode re-signs the app for distribution. That sets `aps-environment` to `production`.
+7. Check it. In the Organizer, use Distribute App → **Custom** → **App Store Connect** → **Export** to get a re-signed copy. Rename the exported `.ipa` to `.zip`, unzip it, and find `Payload/PushCheck.app`. In Terminal type `codesign -d --entitlements - ` (with a space), drag the `.app` in, press Return.
+   - The exported `.app` must show `aps-environment` = `production` and `com.apple.developer.icloud-container-environment` = `Production`.
+   - The `.app` inside the archive itself is not re-signed yet and still shows `development`. Only the exported copy counts.
+8. Wait for the "ready to test" email (often 10–30 minutes).
+9. App Store Connect → your app → TestFlight → Internal Testing → add a group with yourself.
+10. On the iPhone, install the **TestFlight** app. Install PushCheck from it.
+11. Open PushCheck from the Home Screen. Wait for `SETUP | done` and `APNS | registered`.
+12. Repeat Part F steps 7 to 14 (background, lock, 3 Mac writes 5 minutes apart, wait, read).
+13. Decide:
     - TestFlight build gets at least one push, the Debug build got none: **Fail**.
     - TestFlight build also gets none: **Blocked**. The setup is wrong, not the push environment. Fix it (below) and run Part F again.
 

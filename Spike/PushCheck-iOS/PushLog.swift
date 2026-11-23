@@ -40,7 +40,7 @@ final class PushLog {
 
     /// Number of push lines for the spike subscription.
     var pushCount: Int {
-        lines.filter { $0.contains("PUSH") && $0.contains(SpikeConfig.subscriptionID) }.count
+        lines.filter { $0.contains("| PUSH |") && $0.contains(SpikeConfig.subscriptionID) }.count
     }
 
     func add(_ kind: String, _ message: String) {

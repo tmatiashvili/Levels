@@ -8,6 +8,7 @@
 import CloudKit
 import Foundation
 import Observation
+import Security
 
 @MainActor
 @Observable
@@ -38,8 +39,20 @@ final class RecordWriter {
     }
 
     var text: String {
-        lines.reversed().joined(separator: "\n")
+        (["signed container environment: \(Self.signedContainerEnvironment)"] + lines.reversed())
+            .joined(separator: "\n")
     }
+
+    /// The `com.apple.developer.icloud-container-environment` value this build was
+    /// signed with, read from its own code signature. Must say "Production" for the test.
+    static let signedContainerEnvironment: String = {
+        guard let task = SecTaskCreateFromSelf(nil) else { return "unknown (no SecTask)" }
+        let key = "com.apple.developer.icloud-container-environment" as CFString
+        guard let value = SecTaskCopyValueForEntitlement(task, key, nil) else {
+            return "not set (CloudKit defaults to Development)"
+        }
+        return (value as? String) ?? "unreadable"
+    }()
 
     func write() async {
         guard !isBusy else { return }

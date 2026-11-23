@@ -10,6 +10,9 @@ struct WriterView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Container: \(SpikeConfig.containerID)")
                 .font(.callout.monospaced())
+            Text("Signed container environment: \(RecordWriter.signedContainerEnvironment)")
+                .font(.callout.monospaced())
+                .foregroundStyle(RecordWriter.signedContainerEnvironment == "Production" ? .green : .red)
             Text("Writes so far: \(writer.writeCount)")
 
             HStack {
