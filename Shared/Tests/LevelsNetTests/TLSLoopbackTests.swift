@@ -25,14 +25,14 @@ struct TLSLoopbackTests {
 
     static let phoneKey = SymmetricKey(data: Data(repeating: 0xA1, count: 32))
 
-    func rig() async throws -> Rig {
+    func rig(limits: HubListener.Limits = .standard) async throws -> Rig {
         let store = InMemoryHubPairingStore([PairedClient(id: phoneID, name: "My iPhone", kind: .iphone,
                                                           key: Self.phoneKey.withUnsafeBytes { Data($0) }, pairedAt: t0)])
         let window = PairingWindow(store: store)
         let backend = FakeBackend(devices: [macRecord()], window: window)
         let events = EventLog()
         let listener = HubListener(router: HubRouter(backend: backend), keyring: HubKeyring(store: store, window: window),
-                                   loopbackOnly: true, events: { e in events.append(e) })
+                                   loopbackOnly: true, limits: limits, events: { e in events.append(e) })
         let port = try await listener.start()
         return Rig(listener: listener, port: port, store: store, window: window, events: events)
     }
@@ -118,6 +118,135 @@ struct TLSLoopbackTests {
         #expect(response.status == 400)
         await rig.listener.stop()
     }
+}
+
+extension TLSLoopbackTests {
+    /// R12a: half-open TCP connections that never send a ClientHello are closed at the
+    /// handshake deadline, and while they wait they use only the pending budget, not the
+    /// authenticated slots.
+    @Test func R12a_handshakeDeadlineFreesSlots() async throws {
+        let rig = try await rig(limits: .init(maxPendingHandshakes: 2, handshakeTimeout: .milliseconds(600)))
+        let authenticated = try await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).get()
+        let raws = [RawTCP(port: rig.port), RawTCP(port: rig.port)]
+        for raw in raws { #expect(await raw.open()) }
+        await waitFor { await rig.listener.connectionCount == 3 }
+        // The pending budget is full: a new handshake is refused …
+        #expect(await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).failure != nil)
+        #expect(rig.events.withLock { $0 }.contains(.connectionRefused))
+        // … but the authenticated connection keeps working.
+        #expect(try await authenticated.exchange(HTTPRequest(method: "GET", path: "/v1/snapshot"), timeout: .seconds(5)).status == 200)
+        // At the deadline the half-open ones are closed and new handshakes get through.
+        await waitFor(timeout: .seconds(3)) { await rig.listener.connectionCount == 1 }
+        for raw in raws { await waitFor { raw.isClosed } }
+        let fresh = try await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).get()
+        #expect(try await fresh.exchange(HTTPRequest(method: "GET", path: "/v1/snapshot"), timeout: .seconds(5)).status == 200)
+        authenticated.close()
+        fresh.close()
+        await rig.listener.stop()
+    }
+
+    /// R12a: with every pending slot taken, the 4 authenticated slots are still there.
+    @Test func R12a_pendingHandshakesDontTakeAuthenticatedSlots() async throws {
+        let rig = try await rig(limits: .init(maxPendingHandshakes: 1, handshakeTimeout: .seconds(30)))
+        var open: [HubClientConnection] = []
+        for _ in 0..<3 { open.append(try await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).get()) }
+        let raw = RawTCP(port: rig.port)
+        #expect(await raw.open())
+        await waitFor { await rig.listener.connectionCount == 4 }
+        // One half-open connection holds the one pending slot; the server refuses more raw ones.
+        let second = RawTCP(port: rig.port)
+        _ = await second.open()
+        await waitFor { second.isClosed }
+        raw.close()
+        await waitFor { await rig.listener.connectionCount == 3 }
+        // The 4th authenticated connection still fits.
+        open.append(try await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).get())
+        await waitFor { await rig.listener.connectionCount == 4 }
+        for c in open { c.close() }
+        await rig.listener.stop()
+    }
+
+    /// R6: the buffer is bounded while a request is in flight. A held long-poll plus more
+    /// than `maxHeader + maxBody` bytes closes the connection.
+    @Test func R6_bufferCapClosesTheConnection() async throws {
+        let rig = try await rig()
+        let probe = try await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).get()
+        let etag = try await probe.exchange(HTTPRequest(method: "GET", path: "/v1/snapshot"), timeout: .seconds(5)).header("etag")!
+        probe.close()
+        let raw = RawTLS(port: rig.port, identity: phoneID.recordName, key: Self.phoneKey)
+        #expect(await raw.open())
+        await waitFor { await rig.listener.connectionCount == 1 }
+        // A long-poll the server holds for 25 s …
+        raw.send(HTTPCodec.serialize(HTTPRequest(method: "GET", path: "/v1/snapshot", query: ["wait": "25"],
+                                                 headers: ["if-none-match": etag])))
+        try await Task.sleep(for: .milliseconds(200))
+        // … then a flood while it is in flight.
+        // 64 KB stays under the 72 KB cap (maxHeader + maxBody) …
+        for _ in 0..<8 { raw.send(Data(repeating: 0x41, count: 8 * 1024)) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(await rig.listener.connectionCount == 1 && !raw.isClosed)
+        // … 80 KB goes over it.
+        for _ in 0..<2 { raw.send(Data(repeating: 0x41, count: 8 * 1024)) }
+        await waitFor(timeout: .seconds(3)) { await rig.listener.connectionCount == 0 }
+        await waitFor { raw.isClosed }
+        await rig.listener.stop()
+    }
+}
+
+/// A plain TCP connection that never starts TLS (a half-open handshake).
+final class RawTCP: @unchecked Sendable {
+    let connection: NWConnection
+    private let closed = Mutex(false)
+    init(port: UInt16, parameters: NWParameters = .tcp) {
+        connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: parameters)
+    }
+
+    var isClosed: Bool { closed.withLock { $0 } }
+
+    /// Waits until ready; `false` on failure. Then watches for the server closing it.
+    func open() async -> Bool {
+        let ok: Bool = await withCheckedContinuation { c in
+            let once = Mutex<CheckedContinuation<Bool, Never>?>(c)
+            connection.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .ready: once.withLock { $0.take() }?.resume(returning: true)
+                case .failed, .cancelled:
+                    self?.closed.withLock { $0 = true }
+                    once.withLock { $0.take() }?.resume(returning: false)
+                default: break
+                }
+            }
+            connection.start(queue: .global())
+        }
+        if ok { watch() }
+        return ok
+    }
+
+    private func watch() {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] _, _, isComplete, error in
+            guard let self else { return }
+            if isComplete || error != nil {
+                self.closed.withLock { $0 = true }
+                self.connection.cancel()
+                return
+            }
+            self.watch()
+        }
+    }
+
+    func send(_ data: Data) { connection.send(content: data, completion: .idempotent) }
+    func close() { connection.cancel() }
+}
+
+/// A TLS-PSK client connection that sends raw bytes.
+final class RawTLS: @unchecked Sendable {
+    let raw: RawTCP
+    init(port: UInt16, identity: String, key: SymmetricKey) {
+        raw = RawTCP(port: port, parameters: NWParameters(tls: HubTLS.clientOptions(identity: identity, key: key), tcp: .init()))
+    }
+    var isClosed: Bool { raw.isClosed }
+    func open() async -> Bool { await raw.open() }
+    func send(_ data: Data) { raw.send(data) }
 }
 
 extension Result {

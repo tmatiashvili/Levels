@@ -25,7 +25,7 @@ UI-002 and UI-003 assume iCloud: their empty states, banners, "Remove" and "Abou
 
 - **R1** **Not paired.** Status `.notPaired` replaces the device list with a card: title "Connect to your Mac", text "Levels shows your Mac's battery and accessories when your iPhone is on the same Wi-Fi.", button **Connect**. This iPhone's own row shows below the card.
 - **R2** **Connect** first shows one line: "Next, iOS asks to find devices on your network. Levels uses this only to reach your Mac." and **Continue**. Only then does the app start browsing (the system prompt appears on first use).
-- **R3** **Pick and code.** The screen lists hubs in pairing mode ("Levels-ab12") and says "On your Mac, open Levels ▸ Settings ▸ iPhone ▸ Pair iPhone." With one hub it is pre-selected. A 6-digit field takes the code (number pad, one-time-code content type). Errors use NET-002 texts. Success: "Connected to <Mac name>" and the list appears.
+- **R3** **Pick and code.** The screen lists hubs in pairing mode ("Levels-ab12") and says "On your Mac, open Levels ▸ Settings ▸ iPhone ▸ Pair iPhone." With one hub it is pre-selected. A 6-digit field takes the code (number pad, one-time-code content type). Errors use NET-002 texts. After the code, the screen shows the confirmation number from `PairingSession.confirmationCode` (NET-002 R6a, `PairingCrypto.displayCode`) with "Check that your Mac shows this number, then tap They match on the Mac." and a Cancel (`PairingSession.cancel()`), and waits in `finish()`. Cancel on the Mac shows "Pairing was cancelled on your Mac." Success: "Connected to <Mac name>" and the list appears.
 - **R4** **Banners** (one at a time, UI-001 `SyncStatusBanner` style):
 
   | Status | Banner |

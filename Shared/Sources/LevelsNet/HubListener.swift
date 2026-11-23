@@ -60,6 +60,29 @@ public actor HubListener {
         }
     }
 
+    /// The connection limits (NET-001 R6, R12, R12a). Tests shorten them.
+    public struct Limits: Sendable, Equatable {
+        /// Authenticated connections.
+        public var maxConnections: Int
+        /// Connections still in the TLS handshake, counted apart from ``maxConnections``.
+        public var maxPendingHandshakes: Int
+        public var handshakeTimeout: Duration
+        /// Bytes buffered per connection, also while a request is in flight.
+        public var maxBuffered: Int
+
+        public init(maxConnections: Int = HubProtocol.maxConnections,
+                    maxPendingHandshakes: Int = HubProtocol.maxPendingHandshakes,
+                    handshakeTimeout: Duration = HubProtocol.handshakeTimeout,
+                    maxBuffered: Int = HubProtocol.maxBuffered) {
+            self.maxConnections = maxConnections
+            self.maxPendingHandshakes = maxPendingHandshakes
+            self.handshakeTimeout = handshakeTimeout
+            self.maxBuffered = maxBuffered
+        }
+
+        public static let standard = Limits()
+    }
+
     private let engine: Engine
     private var isBusy = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -67,10 +90,12 @@ public actor HubListener {
     /// - Parameters:
     ///   - advertise: the Bonjour record to publish, or `nil` for none (tests).
     ///   - loopbackOnly: listen on the loopback interface only (tests).
+    ///   - limits: connection limits (tests shorten them).
     ///   - events: called on the listener's queue.
     public init(router: HubRouter, keyring: HubKeyring, advertise: @escaping @Sendable () -> Advertisement? = { nil },
-                loopbackOnly: Bool = false, events: @escaping @Sendable (Event) -> Void = { _ in }) {
-        engine = Engine(router: router, keyring: keyring, advertise: advertise, loopbackOnly: loopbackOnly, events: events)
+                loopbackOnly: Bool = false, limits: Limits = .standard, events: @escaping @Sendable (Event) -> Void = { _ in }) {
+        engine = Engine(router: router, keyring: keyring, advertise: advertise, loopbackOnly: loopbackOnly,
+                        limits: limits, events: events)
     }
 
     /// Starts (or rebuilds) the listener and waits until it is ready. Returns the port.
@@ -126,6 +151,7 @@ extension HubListener {
         let keyring: HubKeyring
         let advertise: @Sendable () -> Advertisement?
         let loopbackOnly: Bool
+        let limits: Limits
         let events: @Sendable (Event) -> Void
 
         // Everything below is touched on `queue` only (`running` is also read under its lock).
@@ -139,11 +165,12 @@ extension HubListener {
         private let running = OSAllocatedUnfairLock(initialState: false)
 
         init(router: HubRouter, keyring: HubKeyring, advertise: @escaping @Sendable () -> Advertisement?,
-             loopbackOnly: Bool, events: @escaping @Sendable (Event) -> Void) {
+             loopbackOnly: Bool, limits: Limits, events: @escaping @Sendable (Event) -> Void) {
             self.router = router
             self.keyring = keyring
             self.advertise = advertise
             self.loopbackOnly = loopbackOnly
+            self.limits = limits
             self.events = events
         }
 
@@ -296,22 +323,41 @@ extension HubListener {
             return oldest.value.identity
         }
 
-        // MARK: Connections (R6, R12)
+        // MARK: Connections (R6, R12, R12a)
+
+        private var authenticatedCount: Int { connections.values.count { $0.caller != nil } }
+
+        private func refuse(_ connection: NWConnection, _ why: String) {
+            connection.cancel()
+            let now = Date()
+            if lastRefusalLog.map({ now.timeIntervalSince($0) >= 60 }) ?? true {
+                lastRefusalLog = now
+                Self.logger.error("Hub: \(why, privacy: .public); dropping extras")
+            }
+            events(.connectionRefused)
+        }
 
         private func accept(_ connection: NWConnection) {
-            guard connections.count < HubProtocol.maxConnections else {
-                connection.cancel()
-                let now = Date()
-                if lastRefusalLog.map({ now.timeIntervalSince($0) >= 60 }) ?? true {
-                    lastRefusalLog = now
-                    Self.logger.error("Hub: more than \(HubProtocol.maxConnections) connections; dropping extras")
-                }
-                events(.connectionRefused)
+            let authenticated = authenticatedCount
+            guard authenticated < limits.maxConnections else {
+                refuse(connection, "\(limits.maxConnections) connections open")
+                return
+            }
+            // R12a: handshakes in progress have their own small budget, so half-open
+            // connections can't hold the authenticated slots.
+            guard connections.count - authenticated < limits.maxPendingHandshakes else {
+                refuse(connection, "\(limits.maxPendingHandshakes) handshakes pending")
                 return
             }
             let conn = Conn(connection: connection)
             let key = ObjectIdentifier(connection)
             connections[key] = conn
+            // R12a: one-shot handshake deadline; a connection not ready by then is closed.
+            queue.asyncAfter(deadline: .now() + Self.seconds(limits.handshakeTimeout)) { [weak conn] in
+                guard let conn, conn.caller == nil else { return }
+                Self.logger.notice("Hub: handshake not finished in time; closing")
+                conn.connection.cancel()
+            }
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
                 switch state {
@@ -342,6 +388,11 @@ extension HubListener {
                 conn.connection.cancel()
                 return
             }
+            // Another handshake may have finished first and taken the last slot.
+            guard authenticatedCount < limits.maxConnections else {
+                refuse(conn.connection, "\(limits.maxConnections) connections open")
+                return
+            }
             let caller: HubCaller
             if identity == HubProtocol.pairIdentity {
                 caller = .pairing
@@ -361,6 +412,14 @@ extension HubListener {
             conn.connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
                 guard let self else { return }
                 if let data, !data.isEmpty {
+                    // R6: bounded also while a request is in flight (receive keeps running
+                    // so a closed long-poll is noticed).
+                    guard conn.buffer.count + data.count <= self.limits.maxBuffered else {
+                        Self.logger.notice("Hub: more than \(self.limits.maxBuffered) bytes buffered; closing")
+                        conn.buffer = Data()
+                        conn.connection.cancel()
+                        return
+                    }
                     conn.buffer.append(data)
                     self.armIdle(conn)
                 }
@@ -430,8 +489,12 @@ extension HubListener {
                 conn.connection.cancel()
             }
             conn.idle = item
-            let seconds = Double(HubProtocol.idleTimeout.components.seconds)
-            queue.asyncAfter(deadline: .now() + seconds, execute: item)  // one-shot per connection (R12, R17)
+            queue.asyncAfter(deadline: .now() + Self.seconds(HubProtocol.idleTimeout), execute: item)  // one-shot per connection (R12, R17)
+        }
+
+        static func seconds(_ d: Duration) -> Double {
+            let c = d.components
+            return Double(c.seconds) + Double(c.attoseconds) / 1e18
         }
     }
 

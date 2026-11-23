@@ -162,37 +162,49 @@ public struct PairRequestIdentity: Sendable, Equatable {
     }
 }
 
-/// The iPhone side of NET-002 R4–R7, end to end. The caller saves the returned pairing
-/// (after the R10 "Replace?" confirmation when another Mac is stored).
+/// The iPhone side of NET-002 R4–R7, end to end (lead's call 30). Two ways to run it:
+///
+/// - ``start(with:hubTag:code:me:)`` returns a ``PairingSession`` whose
+///   ``PairingSession/confirmationCode`` the screen shows ("Check that your Mac shows
+///   123 456, then tap They match on the Mac"), then ``PairingSession/finish(now:)``
+///   waits for the owner's tap on the Mac and checks the new key. ``PairingSession/cancel()``
+///   (or cancelling the task) stops it.
+/// - ``pair(with:hubTag:code:me:now:onConfirmationCode:)`` does both in one call and
+///   hands the number to `onConfirmationCode` as soon as it is known.
+///
+/// The caller saves the returned pairing (after the R10 "Replace?" confirmation when
+/// another Mac is stored).
 public struct PairingClient: Sendable {
-    private static let logger = Logger(subsystem: LevelsLog.subsystem, category: "hub")
-    /// Every step's limit (NET-002 Design: 10 s each, 30 s total).
+    static let logger = Logger(subsystem: LevelsLog.subsystem, category: "hub")
+    /// Every network step's limit (NET-002 Design: 10 s each).
     public let stepTimeout: Duration
+    /// How long ``PairingSession/finish(now:)`` waits for "They match" on the Mac.
+    public let confirmTimeout: Duration
 
-    public init(stepTimeout: Duration = .seconds(10)) { self.stepTimeout = stepTimeout }
+    public init(stepTimeout: Duration = .seconds(10), confirmTimeout: Duration = .seconds(120)) {
+        self.stepTimeout = stepTimeout
+        self.confirmTimeout = confirmTimeout
+    }
 
-    public func pair(with endpoint: NWEndpoint, hubTag: String, code: String,
-                     me: PairRequestIdentity, now: Date = Date()) async throws(PairError) -> HubPairing {
+    /// R4–R6a: opens the `pair` session, swaps keys (commitment first), derives the key and
+    /// the confirmation number, and reveals this device's key so the Mac shows the number too.
+    public func start(with endpoint: NWEndpoint, hubTag: String, code: String,
+                      me: PairRequestIdentity) async throws(PairError) -> PairingSession {
         let codeKey = PairingCrypto.codeKey(code: code, hubTag: hubTag)
         // R4: identity `pair`, key from the code.
         let session = HubClientConnection(endpoint: endpoint, identity: HubProtocol.pairIdentity, key: codeKey)
-        defer { session.close() }
+        var handedOff = false
+        defer { if !handedOff { session.close() } }
         do { try await session.open(timeout: stepTimeout) } catch {
             Self.logger.notice("Pairing handshake failed: \(String(describing: error), privacy: .public)")
             throw Self.map(error, handshake: .wrongCode)
         }
-        // R5: swap fresh X25519 keys.
+        // R5: a fresh X25519 key; only its commitment goes first.
         let mine = Curve25519.KeyAgreement.PrivateKey()
-        let request = PairRequest(deviceID: me.deviceID, name: me.name, kind: me.kind, publicKey: mine.publicKey.rawRepresentation)
-        guard let body = try? HubWire.encoder().encode(request) else { throw .refused }
-        let answer: HTTPResponse
-        do {
-            answer = try await session.exchange(HTTPRequest(method: "POST", path: HubProtocol.Path.pair,
-                                                            headers: ["content-type": "application/json"], body: body),
-                                                timeout: stepTimeout)
-        } catch {
-            throw Self.map(error, handshake: .refused)
-        }
+        let myPublic = mine.publicKey.rawRepresentation
+        let request = PairRequest(deviceID: me.deviceID, name: me.name, kind: me.kind,
+                                  commitment: PairingCrypto.commitment(to: myPublic))
+        let answer = try await post(HubProtocol.Path.pair, request, on: session, timeout: stepTimeout)
         switch answer.status {
         case 200: break
         case 409: throw .hubFull
@@ -203,9 +215,104 @@ public struct PairingClient: Sendable {
               let theirs = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: response.publicKey),
               let shared = try? mine.sharedSecretFromKeyAgreement(with: theirs)
         else { throw .refused }
-        // R6
-        let key = PairingCrypto.pairingKey(shared: shared, codeKey: codeKey, hubID: response.hubID, deviceID: me.deviceID)
-        session.close()
+        // R6, R6a
+        let transcript = PairingTranscript(hubTag: hubTag, hubID: response.hubID, hubDeviceID: response.hubDeviceID,
+                                           hubName: response.hubName, deviceID: me.deviceID, deviceName: me.name,
+                                           kind: me.kind, devicePublicKey: myPublic, hubPublicKey: response.publicKey)
+        let key = PairingCrypto.pairingKey(shared: shared, transcript: transcript)
+        let sas = PairingCrypto.confirmationCode(shared: shared, transcript: transcript)
+        // R5a: reveal the key; the Mac answers when the owner decides.
+        guard let body = try? HubWire.encoder().encode(PairConfirmRequest(publicKey: myPublic)) else { throw .refused }
+        let reveal = HTTPRequest(method: "POST", path: HubProtocol.Path.pairConfirm,
+                                 headers: ["content-type": "application/json"], body: body)
+        let confirmTimeout = confirmTimeout
+        let decision = Task { () -> Result<HTTPResponse, HubError> in
+            do throws(HubError) { return .success(try await session.exchange(reveal, timeout: confirmTimeout)) } catch { return .failure(error) }
+        }
+        handedOff = true
+        return PairingSession(endpoint: endpoint, hubTag: hubTag, me: me, response: response, key: key,
+                              confirmationCode: sas, connection: session, decision: decision, stepTimeout: stepTimeout)
+    }
+
+    /// The whole flow in one call. `onConfirmationCode` gets the 6-digit number to show
+    /// (``PairingCrypto/displayCode(_:)`` formats it) before the wait for the Mac starts.
+    public func pair(with endpoint: NWEndpoint, hubTag: String, code: String,
+                     me: PairRequestIdentity, now: Date = Date(),
+                     onConfirmationCode: @escaping @Sendable (String) -> Void = { _ in }) async throws(PairError) -> HubPairing {
+        let session = try await start(with: endpoint, hubTag: hubTag, code: code, me: me)
+        onConfirmationCode(session.confirmationCode)
+        return try await session.finish(now: now)
+    }
+
+    private func post<T: Encodable>(_ path: String, _ value: T, on session: HubClientConnection,
+                                    timeout: Duration) async throws(PairError) -> HTTPResponse {
+        guard let body = try? HubWire.encoder().encode(value) else { throw .refused }
+        do {
+            return try await session.exchange(HTTPRequest(method: "POST", path: path,
+                                                          headers: ["content-type": "application/json"], body: body),
+                                              timeout: timeout)
+        } catch {
+            throw Self.map(error, handshake: .refused)
+        }
+    }
+
+    static func map(_ error: HubError, handshake: PairError) -> PairError {
+        switch error {
+        case .handshakeRefused: handshake
+        case .timedOut: .timedOut
+        case .notFound, .notReady, .localNetworkDenied, .notPaired: .notReachable
+        case .versionMismatch, .badResponse: .refused
+        }
+    }
+}
+
+/// A pairing waiting for the owner's "They match" on the Mac (NET-002 R6a, lead's call 30).
+public final class PairingSession: Sendable {
+    /// The 6-digit number to show; the Mac shows the same one when nobody is in the middle.
+    public let confirmationCode: String
+    /// The Mac's display name, for "Pairing with <name>".
+    public let hubName: String
+
+    private let endpoint: NWEndpoint
+    private let hubTag: String
+    private let me: PairRequestIdentity
+    private let response: PairResponse
+    private let key: SymmetricKey
+    private let connection: HubClientConnection
+    private let decision: Task<Result<HTTPResponse, HubError>, Never>
+    private let stepTimeout: Duration
+
+    init(endpoint: NWEndpoint, hubTag: String, me: PairRequestIdentity, response: PairResponse, key: SymmetricKey,
+         confirmationCode: String, connection: HubClientConnection,
+         decision: Task<Result<HTTPResponse, HubError>, Never>, stepTimeout: Duration) {
+        self.endpoint = endpoint
+        self.hubTag = hubTag
+        self.me = me
+        self.response = response
+        self.key = key
+        self.confirmationCode = confirmationCode
+        self.hubName = response.hubName
+        self.connection = connection
+        self.decision = decision
+        self.stepTimeout = stepTimeout
+    }
+
+    deinit { connection.close() }
+
+    /// Waits for the owner's decision on the Mac, then R7: a normal request with the new key.
+    /// Throws `.refused` when the owner tapped Cancel (or the numbers didn't match) and
+    /// `.timedOut` when the window ended first. Call it once.
+    public func finish(now: Date = Date()) async throws(PairError) -> HubPairing {
+        let answer = await withTaskCancellationHandler { await decision.value } onCancel: { [connection] in connection.close() }
+        connection.close()
+        switch answer {
+        case .success(let r) where r.status == 204: break
+        case .success(let r) where r.status == 408: throw .timedOut
+        case .success(let r) where r.status == 423: throw .tooManyTries
+        case .success: throw .refused
+        case .failure(let e): throw PairingClient.map(e, handshake: .refused)
+        }
+        if Task.isCancelled { throw .refused }
         // R7: a normal request with the new key confirms the pairing on the Mac.
         let confirm = HubClientConnection(endpoint: endpoint, identity: me.deviceID.recordName, key: key)
         defer { confirm.close() }
@@ -216,21 +323,18 @@ public struct PairingClient: Sendable {
                                                    timeout: stepTimeout)
             guard check.status == 200 else { throw PairError.refused }
         } catch let error as HubError {
-            throw Self.map(error, handshake: .refused)
+            throw PairingClient.map(error, handshake: .refused)
         } catch {
             throw .refused
         }
-        Self.logger.notice("Paired with hub \(hubTag, privacy: .public)")
+        PairingClient.logger.notice("Paired with hub \(self.hubTag, privacy: .public)")
         return HubPairing(hubID: response.hubID, hubTag: hubTag, hubDeviceID: response.hubDeviceID,
                           hubName: response.hubName, key: key.withUnsafeBytes { Data($0) }, pairedAt: now)
     }
 
-    static func map(_ error: HubError, handshake: PairError) -> PairError {
-        switch error {
-        case .handshakeRefused: handshake
-        case .timedOut: .timedOut
-        case .notFound, .notReady, .localNetworkDenied, .notPaired: .notReachable
-        case .versionMismatch, .badResponse: .refused
-        }
+    /// Stops waiting; the Mac's held request ends when the connection closes.
+    public func cancel() {
+        decision.cancel()
+        connection.close()
     }
 }

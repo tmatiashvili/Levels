@@ -23,6 +23,14 @@ public enum HubProtocol {
     public static let maxPairedDevices = 4
     /// At most this many open connections (NET-001 R12).
     public static let maxConnections = 4
+    /// At most this many connections still in the TLS handshake, on top of
+    /// ``maxConnections`` (NET-001 R12a): half-open connections can't take the slots of
+    /// authenticated ones.
+    public static let maxPendingHandshakes = 3
+    /// A connection not through the TLS handshake after this long is closed (NET-001 R12a).
+    public static let handshakeTimeout: Duration = .seconds(10)
+    /// Most bytes buffered for one connection; more closes it (NET-001 R6).
+    public static let maxBuffered = maxHeader + maxBody
     /// A connection idle this long is closed (NET-001 R12).
     public static let idleTimeout: Duration = .seconds(60)
     /// Requests per second per connection before `429` (NET-001 R12).
@@ -38,6 +46,8 @@ public enum HubProtocol {
         public static let devicesMe = "/v1/devices/me"
         public static let pairing = "/v1/pairing"
         public static let pair = "/v1/pair"
+        /// Reveal the device key and wait for "They match" (NET-002 R5a, lead's call 30).
+        public static let pairConfirm = "/v1/pair/confirm"
     }
 
     /// `Levels-<tag>`: the Bonjour instance name for a hub tag (NET-001 R2).

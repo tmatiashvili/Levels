@@ -150,23 +150,60 @@ struct HubRouterTests {
         let router = make(backend)
         #expect(await router.handle(get(), from: .pairing).status == 403)
         #expect(await router.handle(try post([phoneRecord()]), from: .pairing).status == 403)
+        let phoneKey = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
         let body = try HubWire.encoder().encode(PairRequest(deviceID: phoneID, name: "My iPhone", kind: .iphone,
-                                                            publicKey: Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation))
+                                                            commitment: PairingCrypto.commitment(to: phoneKey)))
         let pairRequest = HTTPRequest(method: "POST", path: "/v1/pair", body: body)
         #expect(await router.handle(pairRequest, from: .device(phoneID)).status == 403)
         let answer = await router.handle(pairRequest, from: .pairing)
         #expect(answer.status == 200)
         #expect((try? HubWire.decoder().decode(PairResponse.self, from: answer.body))?.hubID == hubID)
+        // R5a: the reveal is held until the owner taps "They match" (call 30).
+        let reveal = HTTPRequest(method: "POST", path: "/v1/pair/confirm",
+                                 body: try HubWire.encoder().encode(PairConfirmRequest(publicKey: phoneKey)))
+        #expect(await router.handle(reveal, from: .device(phoneID)).status == 403)
+        let held = Task { await router.handle(reveal, from: .pairing) }
+        await waitFor {
+            if case .confirming = window.state { return true }
+            return false
+        }
+        // Before the tap, the device's request confirms nothing.
+        _ = await router.handle(get(), from: .device(phoneID))
+        #expect(store.key(for: phoneID) == nil)
+        window.approve()
+        #expect(await held.value.status == 204)
         // The confirming request (R7).
         _ = await router.handle(get(), from: .device(phoneID))
         #expect(store.key(for: phoneID) != nil)
         #expect(window.state == .paired(name: "My iPhone"))
     }
 
+    @Test func cancelOnTheMacRefusesTheHeldReveal() async throws {
+        let window = PairingWindow(store: InMemoryHubPairingStore(), now: { t0 })
+        window.open(hub: hubInfo)
+        let router = make(FakeBackend(devices: devices, window: window))
+        let phoneKey = Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        let pair = HTTPRequest(method: "POST", path: "/v1/pair", body: try HubWire.encoder().encode(
+            PairRequest(deviceID: phoneID, name: "My iPhone", kind: .iphone, commitment: PairingCrypto.commitment(to: phoneKey))))
+        #expect(await router.handle(pair, from: .pairing).status == 200)
+        let reveal = HTTPRequest(method: "POST", path: "/v1/pair/confirm",
+                                 body: try HubWire.encoder().encode(PairConfirmRequest(publicKey: phoneKey)))
+        let held = Task { await router.handle(reveal, from: .pairing) }
+        await waitFor {
+            if case .confirming = window.state { return true }
+            return false
+        }
+        window.close()
+        #expect(await held.value.status == 403)
+        #expect(await router.handle(HTTPRequest(method: "POST", path: "/v1/pair/confirm", body: Data("x".utf8)),
+                                    from: .pairing).status == 400)
+    }
+
     @Test func pairErrorsMapToStatuses() {
         #expect(HubRouter.status(for: .hubFull) == 409)
         #expect(HubRouter.status(for: .tooManyTries) == 423)
         #expect(HubRouter.status(for: .refused) == 403)
+        #expect(HubRouter.status(for: .timedOut) == 408)
     }
 
     @Test func reportingOffGives503() async {

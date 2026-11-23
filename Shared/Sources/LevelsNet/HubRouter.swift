@@ -5,7 +5,7 @@ import os
 /// Who sent a request, as proven by the TLS-PSK handshake (NET-001 R5).
 public enum HubCaller: Sendable, Equatable {
     case device(DeviceID)
-    /// Identity `pair`: only `POST /v1/pair` (NET-002 R4).
+    /// Identity `pair`: only `POST /v1/pair` and `POST /v1/pair/confirm` (NET-002 R4).
     case pairing
 }
 
@@ -24,6 +24,10 @@ public protocol HubBackend: Sendable {
     func isPaired(_ id: DeviceID) -> Bool
     /// `POST /v1/pair` (NET-002 R5).
     func pair(_ request: PairRequest) async throws(PairError) -> PairResponse
+    /// `POST /v1/pair/confirm` (NET-002 R5a, R6a): checks the revealed key and returns only
+    /// when the owner decided. Returns after "They match" (with the new key in the listener);
+    /// throws `.refused` on Cancel and `.timedOut` when the window ended.
+    func confirmPairing(_ request: PairConfirmRequest) async throws(PairError)
     /// Every authenticated device request: confirms a pending pairing (NET-002 R7) and
     /// records "last seen".
     func seen(_ id: DeviceID) async
@@ -62,14 +66,21 @@ public actor HubRouter {
         let methods: [String: Set<String>] = [
             HubProtocol.Path.snapshot: ["GET"], HubProtocol.Path.readings: ["POST"],
             HubProtocol.Path.devicesMe: ["DELETE"], HubProtocol.Path.pairing: ["DELETE"], HubProtocol.Path.pair: ["POST"],
+            HubProtocol.Path.pairConfirm: ["POST"],
         ]
         guard let allowed = methods[request.path] else { return HTTPResponse(status: 404) }
         guard allowed.contains(request.method) else { return HTTPResponse(status: 405) }
 
         guard case .device(let id) = caller else {
-            return request.path == HubProtocol.Path.pair ? await pair(request) : HTTPResponse(status: 403)
+            switch request.path {
+            case HubProtocol.Path.pair: return await pair(request)
+            case HubProtocol.Path.pairConfirm: return await confirmPairing(request)
+            default: return HTTPResponse(status: 403)
+            }
         }
-        if request.path == HubProtocol.Path.pair { return HTTPResponse(status: 403) }
+        if request.path == HubProtocol.Path.pair || request.path == HubProtocol.Path.pairConfirm {
+            return HTTPResponse(status: 403)
+        }
         await backend.seen(id)
         switch request.path {
         case HubProtocol.Path.snapshot: return await snapshot(request)
@@ -160,12 +171,27 @@ public actor HubRouter {
         }
     }
 
+    // MARK: POST /v1/pair/confirm (NET-002 R5a, R6a)
+
+    private func confirmPairing(_ request: HTTPRequest) async -> HTTPResponse {
+        guard let body = try? HubWire.decoder().decode(PairConfirmRequest.self, from: request.body) else {
+            return HTTPResponse(status: 400)
+        }
+        do {
+            try await backend.confirmPairing(body)
+            return HTTPResponse(status: 204)
+        } catch {
+            return HTTPResponse(status: Self.status(for: error))
+        }
+    }
+
     static func status(for error: PairError) -> Int {
         switch error {
         case .hubFull: 409
         case .tooManyTries: 423
         case .refused, .wrongCode: 403
-        case .notReachable, .timedOut: 503
+        case .timedOut: 408
+        case .notReachable: 503
         }
     }
 }

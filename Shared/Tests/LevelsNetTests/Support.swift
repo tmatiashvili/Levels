@@ -93,6 +93,16 @@ final class FakeBackend: HubBackend {
         return try window.accept(request)
     }
 
+    func confirmPairing(_ request: PairConfirmRequest) async throws(PairError) {
+        guard let window else { throw .refused }
+        try window.reveal(request)
+        switch await window.decision() {
+        case .matched: return
+        case .cancelled: throw .refused
+        case .expired: throw .timedOut
+        }
+    }
+
     func seen(_ id: DeviceID) async {
         state.withLock { $0.seen.append(id) }
         _ = window?.confirm(id)
@@ -100,3 +110,5 @@ final class FakeBackend: HubBackend {
 }
 
 func hex(_ key: SymmetricKey) -> String { key.withUnsafeBytes { Data($0) }.map { String(format: "%02x", $0) }.joined() }
+
+func hexData(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
