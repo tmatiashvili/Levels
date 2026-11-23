@@ -8,6 +8,7 @@ public struct DeviceList: View {
     @Bindable var store: DeviceListStore
     let showsOldDevices: Bool
     let onSelect: ((DeviceRowModel) -> Void)?
+    let highlighted: DeviceID?
 
     @State private var renaming = false
     @State private var newName = ""
@@ -15,14 +16,18 @@ public struct DeviceList: View {
     /// - Parameters:
     ///   - showsOldDevices: the Mac popover passes `false`; old devices go to its Settings (UI-004 R9).
     ///   - onSelect: tap action (iPhone pushes the detail); `nil` = rows aren't tappable.
-    public init(store: DeviceListStore, showsOldDevices: Bool = true, onSelect: ((DeviceRowModel) -> Void)? = nil) {
+    ///   - highlighted: a row to scroll into view and highlight (Mac device window, UI-004 R14).
+    public init(store: DeviceListStore, showsOldDevices: Bool = true, highlighted: DeviceID? = nil,
+                onSelect: ((DeviceRowModel) -> Void)? = nil) {
         self.store = store
         self.showsOldDevices = showsOldDevices
+        self.highlighted = highlighted
         self.onSelect = onSelect
     }
 
     public var body: some View {
         TimelineView(.everyMinute) { context in
+          ScrollViewReader { proxy in
             List {
                 if SyncStatusBanner.isVisible(state: store.state, isReportingOff: store.isReportingOff) {
                     Section {
@@ -34,6 +39,8 @@ public struct DeviceList: View {
                 Section {
                     ForEach(store.rows) { row in
                         rowView(row, now: context.date)
+                            .id(row.id)
+                            .listRowBackground(row.id == highlighted ? Color.accentColor.opacity(0.18) : nil)
                     }
                 } footer: {
                     if store.state == .onlyThisDevice { EmptyStateView(state: .onlyThisDevice) }
@@ -48,6 +55,10 @@ public struct DeviceList: View {
                 }
             }
             .animation(.default, value: store.rows)
+            .onAppear { scroll(proxy) }
+            .onChange(of: highlighted) { scroll(proxy) }
+            .onChange(of: store.rows) { scroll(proxy) }
+          }
         }
         #if !os(watchOS)
         .alert(Text("Rename this device", bundle: .module), isPresented: $renaming) {
@@ -58,6 +69,11 @@ public struct DeviceList: View {
             Text("Leave empty to use the default name.", bundle: .module)
         }
         #endif
+    }
+
+    private func scroll(_ proxy: ScrollViewProxy) {
+        guard let highlighted, store.rows.contains(where: { $0.id == highlighted }) else { return }
+        withAnimation { proxy.scrollTo(highlighted, anchor: .center) }
     }
 
     @ViewBuilder private func rowView(_ row: DeviceRowModel, now: Date) -> some View {

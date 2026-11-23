@@ -35,3 +35,15 @@ struct DisplayPreferencesTests {
         #expect(DeviceOrdering.sorted([mac, watch], thisDeviceID: nil, preferences: DisplayPreferences(hidden: [mac.id])) == [watch])
     }
 }
+
+@Suite("levels:// routes")
+struct RouteTests {
+    @Test func parses() {
+        let id = DeviceID(UUID())
+        #expect(LevelsAppConfig.route(LevelsAppConfig.deviceURL(id)) == .device(id))
+        #expect(LevelsAppConfig.route(URL(string: "levels://device/not-a-uuid")!) == .list)
+        #expect(LevelsAppConfig.route(URL(string: "levels://")!) == .list)
+        #expect(LevelsAppConfig.route(URL(string: "levels://settings")!) == .settings)
+        #expect(LevelsAppConfig.route(URL(string: "https://example.com")!) == nil)
+    }
+}
