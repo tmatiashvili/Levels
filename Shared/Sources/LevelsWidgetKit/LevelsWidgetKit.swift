@@ -324,11 +324,10 @@ struct MediumDevicesView: View {
             Spacer(minLength: 0)
             HStack(alignment: .top, spacing: 6) {
                 ForEach(shown) { row in
-                    Link(destination: LevelsAppConfig.deviceURL(row.id)) {
+                    DeviceLink(id: row.id) {
                         DeviceColumn(row: row, now: entry.date, metrics: .medium,
                                      percentFont: .system(.subheadline, design: .rounded).weight(.semibold),
                                      nameFont: .caption2, reserveStatus: anyStatus)
-                            .foregroundStyle(.primary)  // accented mode must not tint links blue
                     }
                 }
             }
@@ -400,9 +399,8 @@ public struct LargeDevicesView: View {
             }
             .padding(.bottom, 6)
             ForEach(list.shown) { row in
-                Link(destination: LevelsAppConfig.deviceURL(row.id)) {
+                DeviceLink(id: row.id) {
                     LargeDeviceRow(row: row, now: entry.date)
-                        .foregroundStyle(.primary)  // accented mode must not tint links blue
                 }
                 if row.id != list.shown.last?.id { Divider() }
             }

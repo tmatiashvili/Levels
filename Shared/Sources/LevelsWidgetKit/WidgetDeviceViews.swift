@@ -100,23 +100,77 @@ struct RingMetrics {
     static let large = RingMetrics(diameter: 34, stroke: 3.5, glyph: 15, badge: 14)
 }
 
-/// A capacity ring with the device symbol inside and, while charging, a bolt badge on the ring.
-/// Tint per ADR-0016 rule 3: green when charging, red when low, else primary. Dimmed when stale.
+/// The state a ring shows as a badge on its edge. A shape, not only a colour: in tinted and
+/// clear (Liquid Glass) styles, StandBy and on the Lock Screen every colour turns white, so
+/// "low" must still read as low (ADR-0016 rule 3, Liquid Glass review 2026-11-24).
+enum RingBadge: Equatable {
+    case charging
+    case low
+
+    static func of(_ row: DeviceRowModel, now: Date) -> RingBadge? {
+        if row.showsChargingBolt(at: now) { return .charging }
+        return row.hasBattery && row.isLow ? .low : nil
+    }
+
+    var symbolName: String {
+        switch self {
+        case .charging: "bolt.circle.fill"
+        case .low: "exclamationmark.circle.fill"
+        }
+    }
+}
+
+/// Colours of one ring for the current rendering mode. Pure, unit-tested.
+///
+/// - `.fullColor` (default and dark Home Screen, Mac desktop in front): green when charging,
+///   red when low, else primary, on a faint track.
+/// - `.accented` (tinted and clear Home Screen, Mac desktop behind windows) and `.vibrant`
+///   (Lock Screen, StandBy): the system draws everything in one colour and keeps only opacity,
+///   so the fill is solid primary in the accent group and the track a fainter primary.
+enum RingStyle: Equatable {
+    case charging, low, normal
+
+    static func of(_ row: DeviceRowModel, now: Date) -> RingStyle {
+        if row.showsChargingBolt(at: now) { return .charging }
+        return row.isLow ? .low : .normal
+    }
+
+    func fill(_ mode: WidgetRenderingMode) -> Color {
+        guard mode == .fullColor else { return .primary }
+        switch self {
+        case .charging: return .green
+        case .low: return .red
+        case .normal: return .primary
+        }
+    }
+
+    /// The track behind the fill. Stronger when the system removed the widget background
+    /// (StandBy, clear glass) or drew the widget in one colour, where `.quaternary` vanishes.
+    static func track(_ mode: WidgetRenderingMode, showsBackground: Bool) -> AnyShapeStyle {
+        mode == .fullColor && showsBackground ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.tertiary)
+    }
+}
+
+/// A capacity ring with the device symbol inside and, while charging or low, a badge on the
+/// ring. Tint per ADR-0016 rule 3 in full colour; one colour plus a badge shape in the tinted,
+/// clear, StandBy and Lock Screen styles. Dimmed when stale.
 struct DeviceRing: View {
     let row: DeviceRowModel
     let now: Date
     let metrics: RingMetrics
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.showsWidgetContainerBackground) private var showsBackground
 
     var body: some View {
         let stale = row.freshness(at: now) == .stale
-        let charging = row.showsChargingBolt(at: now)
+        let badge = RingBadge.of(row, now: now)
         let fraction = CGFloat(min(max(row.level ?? 0, 0), 100)) / 100
         ZStack {
-            Circle().stroke(.quaternary, lineWidth: metrics.stroke)
+            Circle().stroke(RingStyle.track(renderingMode, showsBackground: showsBackground), lineWidth: metrics.stroke)
             if row.hasBattery {
                 Circle()
                     .trim(from: 0, to: fraction)
-                    .stroke(charging ? Color.green : row.isLow ? Color.red : Color.primary,
+                    .stroke(RingStyle.of(row, now: now).fill(renderingMode),
                             style: StrokeStyle(lineWidth: metrics.stroke, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .widgetAccentable()
@@ -127,34 +181,66 @@ struct DeviceRing: View {
                 .symbolRenderingMode(.hierarchical)
                 .scaledToFit()
                 .frame(width: metrics.glyph, height: metrics.glyph)
+                .widgetAccentable()
         }
         .padding(metrics.stroke / 2)
         .frame(width: metrics.diameter, height: metrics.diameter)
-        .opacity(stale ? 0.45 : 1)
+        // The badge cuts the ring instead of sitting on a disc of the background: tinted and
+        // clear styles have no background to paint, only transparency survives.
+        .mask { RingMask(cut: badge != nil, badge: metrics.badge, gap: metrics.stroke * 0.45) }
         .overlay(alignment: .topTrailing) {
-            if charging { BoltBadge(size: metrics.badge).offset(x: metrics.badge * 0.2, y: -metrics.badge * 0.2) }
+            if let badge {
+                StateBadge(badge: badge, size: metrics.badge)
+                    .offset(x: metrics.badge * 0.2, y: -metrics.badge * 0.2)
+            }
         }
+        .opacity(stale ? 0.45 : 1)
         .accessibilityHidden(true)
     }
 }
 
-/// The charging badge: a green bolt in a disc of the widget's own background, so it cuts the
-/// ring instead of sitting on it.
-struct BoltBadge: View {
+/// Everything but a disc around the badge spot (top trailing).
+private struct RingMask: View {
+    let cut: Bool
+    let badge: CGFloat
+    let gap: CGFloat
+
+    var body: some View {
+        Rectangle()
+            .overlay(alignment: .topTrailing) {
+                if cut {
+                    Circle()
+                        .frame(width: badge + 2 * gap, height: badge + 2 * gap)
+                        .offset(x: badge * 0.2 + gap, y: -badge * 0.2 - gap)
+                        .blendMode(.destinationOut)
+                }
+            }
+            .compositingGroup()
+    }
+}
+
+/// The charging or low badge: a symbol in a disc. In full colour a black bolt on green or a
+/// white "!" on red; in the one-colour styles the glyph is a hole in a solid disc, so it stays
+/// readable when the system paints every layer white.
+struct StateBadge: View {
+    let badge: RingBadge
     let size: CGFloat
     @Environment(\.widgetRenderingMode) private var renderingMode
 
     var body: some View {
-        ZStack {
-            // Tinted and clear modes draw every non-accent layer in one colour: no cut-out disc there.
-            if renderingMode == .fullColor { Circle().fill(.background) }
-            Circle().fill(Color.green).padding(size * 0.12).widgetAccentable()
-            Image(systemName: "bolt.fill")
-                .resizable().scaledToFit()
-                .frame(width: size * 0.42, height: size * 0.42)
-                .foregroundStyle(.black)
+        let image = Image(systemName: badge.symbolName).resizable().scaledToFit()
+        Group {
+            if renderingMode == .fullColor {
+                switch badge {
+                case .charging: image.symbolRenderingMode(.palette).foregroundStyle(.black, .green)
+                case .low: image.symbolRenderingMode(.palette).foregroundStyle(.white, .red)
+                }
+            } else {
+                image.symbolRenderingMode(.monochrome).foregroundStyle(.primary)
+            }
         }
         .frame(width: size, height: size)
+        .widgetAccentable()
     }
 }
 
@@ -189,6 +275,7 @@ struct PercentText: View {
             .foregroundStyle(stale || !row.hasBattery ? .secondary : .primary)
             .lineLimit(1)
             .fixedSize()
+            .widgetAccentable()
     }
 }
 
@@ -243,4 +330,27 @@ struct DeviceColumn: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(RowText.accessibilityLabel(for: row, now: now))
     }
+}
+
+/// A tap target that opens one device (UI-003 R7). In the render harness, where
+/// `ImageRenderer` can't draw a `Link`, just the content.
+struct DeviceLink<Content: View>: View {
+    let id: DeviceID
+    @ViewBuilder let content: Content
+    @Environment(\.isWidgetRenderHarness) private var isHarness
+
+    var body: some View {
+        if isHarness {
+            content.foregroundStyle(.primary)
+        } else {
+            Link(destination: LevelsAppConfig.deviceURL(id)) {
+                content.foregroundStyle(.primary)  // accented mode must not tint links blue
+            }
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// True only in previews and the snapshot harness (``GalleryCell``).
+    @Entry var isWidgetRenderHarness = false
 }
