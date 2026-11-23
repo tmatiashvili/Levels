@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Flat reference of the layers; the real icon is the .icon bundle. -->
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#353BA0"/><stop offset="1" stop-color="#0E103B"/></linearGradient></defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <path d="M 512 130 A 382 382 0 1 1 512 894 A 382 382 0 1 1 512 130 Z M 512 258 A 254 254 0 1 0 512 766 A 254 254 0 1 0 512 258 Z" fill="#FFFFFF" fill-opacity="0.22" fill-rule="evenodd"/>
+  <path d="M 512 130 A 382 382 0 1 1 130 512 A 64 64 0 0 1 258 512 A 254 254 0 1 0 512 258 A 64 64 0 0 1 512 130 Z" fill="#34E37E"/>
+  <path d="M 382 563 A 32 32 0 0 1 446 563 L 446 617 A 32 32 0 0 1 382 617 Z M 480 485 A 32 32 0 0 1 544 485 L 544 617 A 32 32 0 0 1 480 617 Z M 578 407 A 32 32 0 0 1 642 407 L 642 617 A 32 32 0 0 1 578 617 Z" fill="#FFFFFF"/>
+</svg>
