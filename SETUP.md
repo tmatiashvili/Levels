@@ -1,6 +1,6 @@
 # Setting up Levels.xcodeproj
 
-`Levels.xcodeproj` is in the repo. For now it holds the two Mac targets only: `Levels-Mac` and `Widgets-Mac`. The iOS and watch targets are added later, when the owner joins the paid Apple Developer Program. Steps for that are below.
+`Levels.xcodeproj` is in the repo. It holds the two Mac targets (`Levels-Mac`, `Widgets-Mac`) and, since 2026-11-24, the iPhone app, its widget and its unit tests (`Levels-iOS`, `Widgets-iOS`, `Levels-iOSTests`), all signed with the free Personal Team (owner decision M). The watch targets are added later; steps for that are below.
 
 Source of truth: [ADR-0003](docs/adr/0003-project-structure.md). Entitlement rules: [SYNC-001](docs/specs/SYNC-001-cloudkit-sync-engine.md), [MAC-001](docs/specs/MAC-001-mac-menu-bar-agent.md), [ADR-0013](docs/adr/0013-mac-distribution-and-sandbox.md).
 
@@ -12,9 +12,10 @@ You need full Xcode 26 or later (the project was made and checked with Xcode 27.
 |---|---|---|---|---|---|---|
 | Levels-Mac | **in the project** | macOS | `<rdns>.levels` | all five + `CloudKit.framework` | `Levels-Mac/Levels-Mac.entitlements` | – |
 | Widgets-Mac | **in the project** | macOS | `<rdns>.levels.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-Mac/Widgets-Mac.entitlements` | Levels-Mac |
-| Levels-iOS | later | iOS (iPhone + iPad) | `<rdns>.levels` | LevelsModel, LevelsSync, LevelsReaders, LevelsUI, LevelsWidgetKit | `Levels-iOS/Levels-iOS.entitlements` | – |
+| Levels-iOS | **in the project** | iOS (iPhone now; iPad later, UI-005) | `<rdns>.levels` | LevelsModel, LevelsSync, LevelsReaders, LevelsUI, LevelsWidgetKit | `Levels-iOS/Levels-iOS.entitlements` | – |
 | Levels-Watch | later | watchOS | `<rdns>.levels.watchkitapp` | all five | `Levels-Watch/Levels-Watch.entitlements` | Levels-iOS |
-| Widgets-iOS | later | iOS | `<rdns>.levels.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-iOS/Widgets-iOS.entitlements` | Levels-iOS |
+| Widgets-iOS | **in the project** | iOS | `<rdns>.levels.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-iOS/Widgets-iOS.entitlements` | Levels-iOS |
+| Levels-iOSTests | **in the project** | iOS Simulator | `<rdns>.levels.tests` | – (hosted in Levels-iOS) | – | – |
 | Widgets-Watch | later | watchOS | `<rdns>.levels.watchkitapp.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-Watch/Widgets-Watch.entitlements` | Levels-Watch |
 
 Never link LevelsSync or LevelsReaders into a widget target (ADR-0003 §3, SYNC-001 AC17).
@@ -25,9 +26,9 @@ The Team ID and prefix live in one place: `Config/Levels.xcconfig` (now `N5P82JN
 
 The project file was written by hand, without a generator (ADR-0003). If you change it in Xcode, check `git diff` before committing.
 
-- **Synchronized folders:** `Levels-Mac/` and `Widgets-Mac/` are synchronized folders (blue folder icon). Files you add there join their target by themselves.
+- **Synchronized folders:** `Levels-Mac/`, `Widgets-Mac/`, `Levels-iOS/`, `Widgets-iOS/` and `Levels-iOSTests/` are synchronized folders (blue folder icon). Files you add there join their target by themselves.
 - **Info.plist:** each folder has a membership exception for `Info.plist`, so it is not copied in as a resource. The xcconfig points at it through `INFOPLIST_FILE`.
-- **xcconfig files:** the project uses `Config/Levels.xcconfig` for Debug and Release. Each target uses its own file (`Levels-Mac`, `Widgets-Mac`). The target build settings in the project are empty, so the xcconfig files decide everything.
+- **xcconfig files:** the project uses `Config/Levels.xcconfig` for Debug and Release. Each target uses its own file (`Levels-Mac`, `Widgets-Mac`, `Levels-iOS`, `Widgets-iOS`, `Levels-iOSTests`). The target build settings in the project are empty, so the xcconfig files decide everything.
 - **Shared package:** `Shared/` is a local package. `Levels-Mac` links all five products and `CloudKit.framework`. `Widgets-Mac` links LevelsModel, LevelsUI and LevelsWidgetKit only.
 - **Embedding:** `Levels-Mac` has an "Embed Foundation Extensions" phase that copies `LevelsWidgets.appex` into `Levels.app/Contents/PlugIns/`.
 - **Schemes:** `Levels-Mac` and `Widgets-Mac` are shared schemes in `Levels.xcodeproj/xcshareddata/xcschemes/`. Xcode also shows a scheme for each package product.
@@ -52,6 +53,27 @@ What the free build does not do yet: other devices (needs iCloud), push, and a w
 
 Check it worked: `log show --predicate 'subsystem BEGINSWITH "com.tmatiashvili"' --last 2m` shows `Report launch: <name> level=63 …` and, in Debug builds, the `snapshot.json` it wrote; compare with `pmset -g batt`. Terminal can't read `~/Library/Group Containers/<TEAMID>.com.tmatiashvili.levels/` directly (macOS protects other apps' group containers), which is why the Debug log prints the file.
 
+## Try it on the iPhone
+
+The iPhone app works today on the free team, local only (owner decision M, before the Mac hub client lands): it shows this iPhone's own battery in the app and in Home Screen and Lock Screen widgets. The Mac and its accessories appear once the hub client (NET-003) is wired in behind the same `BatterySyncing` seam.
+
+1. **Build and install** (iPhone connected by cable or on the same Wi-Fi, Developer Mode on):
+   ```sh
+   xcodebuild -project Levels.xcodeproj -scheme Levels-iOS -configuration Debug \
+     -destination 'id=<UDID>' -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+     -derivedDataPath /tmp/levels-ios build
+   xcrun devicectl device install app --device <UDID> /tmp/levels-ios/Build/Products/Debug-iphoneos/Levels.app
+   xcrun devicectl device process launch --device <UDID> com.tmatiashvili.levels
+   ```
+   Or pick the `Levels-iOS` scheme and the iPhone in Xcode and press ⌘R. `xcrun devicectl list devices` shows the UDID.
+2. **Trust the developer once.** If the launch fails with "profile has not been explicitly trusted", open Settings → General → VPN & Device Management → Apple Development: <your Apple ID> → Trust. iOS forgets the trust when the last app of this developer is deleted, so it can come back after uninstalling.
+3. **Use it.** The list shows this iPhone; pull down to refresh (reports `.userRefresh`). ⚙ opens Settings: rename, the Mac section (Connect comes with the hub), Shortcuts setup, hidden devices, Remove all my data.
+4. **Add widgets.** Home Screen: touch and hold → Edit → Add Widget → Levels → small, medium or large "Battery Levels". Lock Screen: touch and hold → Customize → Lock Screen → widgets → Levels (circular, rectangular, inline). A tap opens `levels://device/<uuid>`.
+5. **Keep it fresh.** Set up the "Report Battery" automations (RPT-002; the app's hint card and Settings → "Set up Shortcuts automation" show the steps). Background refresh runs too, when iOS allows it.
+6. **Rebuild every week.** The free profile lasts 7 days.
+
+Check it worked: `xcrun devicectl device copy from --device <UDID> --domain-type appGroupDataContainer --domain-identifier group.com.tmatiashvili.levels --source Levels/snapshot.json --destination /tmp/levels-snapshot.json` copies the cache the app wrote; it holds this iPhone's record with `"type":"iphone"` and the current level. Unit tests of the app target: `xcodebuild test -project Levels.xcodeproj -scheme Levels-iOS -destination 'platform=iOS Simulator,name=iPhone 18 Pro'`.
+
 ## Free Personal Team (now)
 
 Owner decision (2026-11-23): no paid Apple Developer Program for now. Xcode signs with the owner's free Personal Team. Tested on 2026-11-23 with Xcode 27.2 on macOS 27.2:
@@ -66,6 +88,18 @@ Owner decision (2026-11-23): no paid Apple Developer Program for now. Xcode sign
 | `keychain-access-groups` `$(AppIdentifierPrefix)$(LEVELS_RDNS).levels.shared` | kept | kept | Accepted. The free profile allows `N5P82JNFSC.*`. |
 | `com.apple.security.network.client` | kept | – | Accepted. |
 
+iPhone targets, tested on 2026-11-24 with Xcode 27.2 and iOS 27 on an iPhone 18 Pro Max:
+
+| Entitlement or setting | Levels-iOS | Widgets-iOS | Result |
+|---|---|---|---|
+| iCloud (CloudKit, container, environment) | **removed** | – | Not tried again: rejected for the Mac with the same team (above). Put back from the paid-team block below. |
+| Push (`aps-environment`) | **removed** | – | Same. `UIBackgroundModes` `remote-notification` removed too (nothing can push without it). |
+| App Group `group.$(LEVELS_RDNS).levels` | kept | kept | Accepted; Xcode registered the group. App and widget share `Levels/snapshot.json` in it. |
+| `keychain-access-groups` `$(AppIdentifierPrefix)$(LEVELS_RDNS).levels.shared` | kept | kept | Accepted. The free profile allows `N5P82JNFSC.*`. |
+| `UIBackgroundModes` `fetch` + `BGTaskSchedulerPermittedIdentifiers` | kept | – | Accepted (needs no entitlement). |
+| `NSLocalNetworkUsageDescription`, `NSBonjourServices` `_levels._tcp` | added | – | For the hub client (NET-003). No prompt yet: nothing browses until Connect exists. |
+| App IDs | `<rdns>.levels` | `<rdns>.levels.widgets` | The same IDs the Mac targets already use, so no new App ID. The free team allows 10 App IDs per 7 days. |
+
 What else the free team means:
 
 - The profile Xcode makes lasts 7 days and lists only this Mac. Build again at least once a week, or the app may stop launching.
@@ -73,7 +107,7 @@ What else the free team means:
 - No CloudKit and no push, so no sync between devices. Code must not create a `CKContainer` while the iCloud entitlement is missing, because CloudKit stops the app when the entitlement is missing. `CloudKit.framework` is still linked (ADR-0013); linking alone is harmless.
 - `registerForRemoteNotifications()` fails without the push entitlement. MAC-001 R8 already says to log and continue.
 
-When the owner pays, put these keys back into `Levels-Mac/Levels-Mac.entitlements` (values from the MAC-001 table), change `DEVELOPMENT_TEAM` to the paid Team ID and build again:
+When the owner pays, put these keys back into `Levels-Mac/Levels-Mac.entitlements` (values from the MAC-001 table), change `DEVELOPMENT_TEAM` to the paid Team ID and build again. For `Levels-iOS/Levels-iOS.entitlements` the same block applies with the key `aps-environment` instead of `com.apple.developer.aps-environment`, and `remote-notification` goes back into `UIBackgroundModes` in `Levels-iOS/Info.plist`:
 
 ```xml
 <key>com.apple.developer.aps-environment</key>
@@ -92,7 +126,9 @@ When the owner pays, put these keys back into `Levels-Mac/Levels-Mac.entitlement
 
 A new Team ID changes `$(TeamIdentifierPrefix)`, so the App Group and keychain group get new IDs and the Mac starts with an empty cache. That is fine for a cache.
 
-## Adding the iOS and watch targets (later)
+## Adding the watch targets (later)
+
+> The iOS targets were added by hand on 2026-11-24 (see Targets). The steps below were written for all four targets; use them for `Levels-Watch` and `Widgets-Watch` only, and skip what concerns `Levels-iOS` and `Widgets-iOS`.
 
 Do this only with the paid team: the iOS and watch apps need iCloud and push. The project and the Mac targets already exist, so these steps only add targets.
 

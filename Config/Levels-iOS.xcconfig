@@ -1,9 +1,10 @@
-// Levels-iOS: iPhone + iPad universal app (ADR-0003 §4, §5).
+// Levels-iOS: the iPhone app (ADR-0003 §4, §5). iPad joins later (UI-005).
 #include "Levels.xcconfig"
 
 SDKROOT = iphoneos
 SUPPORTED_PLATFORMS = iphoneos iphonesimulator
-TARGETED_DEVICE_FAMILY = 1,2
+// iPhone only for now; set back to 1,2 when UI-005 (iPad) is built.
+TARGETED_DEVICE_FAMILY = 1
 
 PRODUCT_NAME = Levels
 PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels
@@ -16,9 +17,10 @@ INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPo
 // UI-005 R5: all iPad orientations, no UIRequiresFullScreen.
 INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
 
-// One file for Debug and Release (lead's call 14): aps-environment is
-// `development`; exporting for TestFlight, App Store or Developer ID rewrites
-// it to `production`.
+// One file for Debug and Release (lead's call 14). While the team is a free
+// Personal Team it holds no iCloud or push keys (SETUP.md, "Free Personal
+// Team"). With a paid team aps-environment comes back as `development`;
+// exporting for TestFlight or the App Store rewrites it to `production`.
 CODE_SIGN_ENTITLEMENTS = Levels-iOS/Levels-iOS.entitlements
 
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
