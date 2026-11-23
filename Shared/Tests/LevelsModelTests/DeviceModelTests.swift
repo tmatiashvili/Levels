@@ -101,4 +101,27 @@ struct DeviceModelTests {
         #expect(DefaultDeviceName.defaultName(kind: .mac, computerName: nil) == "Mac")
         #expect(DefaultDeviceName.resolved(kind: .mac, thisDeviceName: "Laptop", computerName: "Studio") == "Laptop")
     }
+
+    @Test("Invariant: accessory is non-nil iff kind == .accessory")
+    func accessoryInvariant() {
+        // The init's precondition can't be exercised here: exit tests don't run under the
+        // Command Line Tools test helper. The flag it checks is tested instead.
+        #expect(battery(kind: .iphone).hasConsistentAccessory)
+        var d = battery(kind: .iphone)
+        d.kind = .accessory
+        #expect(!d.hasConsistentAccessory)
+        d.accessory = AccessoryInfo(parentDeviceID: DeviceID(UUID()), kind: .mouse, groupID: UUID(), component: .main)
+        #expect(d.hasConsistentAccessory)
+        d.kind = .mac
+        #expect(!d.hasConsistentAccessory)
+    }
+
+    @Test("SYNC-001 R21: one Logger subsystem, <bundle-prefix>.levels")
+    func logSubsystem() {
+        #expect(LevelsLog.subsystem(forBundleID: "com.example.levels") == "com.example.levels")
+        #expect(LevelsLog.subsystem(forBundleID: "com.example.levels.watchkitapp.widgets") == "com.example.levels")
+        #expect(LevelsLog.subsystem(forBundleID: "com.apple.dt.xctest.tool") == "levels")
+        #expect(LevelsLog.subsystem(forBundleID: nil) == "levels")
+        #expect(LevelsLog.syncCategory == "sync")
+    }
 }

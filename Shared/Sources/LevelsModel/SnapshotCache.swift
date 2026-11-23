@@ -46,10 +46,19 @@ public struct SnapshotCache: Sendable {
         return Self.decode(data)
     }
 
+    /// Why `update` refused to touch the file.
+    public enum UpdateError: Error, Equatable {
+        /// The file was written by a newer (or unknown) format; it is left as it is.
+        case unsupportedFormatVersion(Int)
+    }
+
     /// Read, transform and write inside one coordinated write, replacing the file
-    /// atomically (SYNC-002 R13). A missing or unreadable file starts from an empty
-    /// ``SnapshotFile``. Nothing is written when `body` leaves the snapshot unchanged.
-    /// Returns what `body` returns.
+    /// atomically (SYNC-002 R13). Starts from an empty ``SnapshotFile`` only when the
+    /// file is missing or is not valid snapshot JSON. Any other read error (no
+    /// permission, data protection before first unlock, I/O) and an unknown
+    /// `formatVersion` throw without writing, so own ID, fingerprints and `lastWritten`
+    /// are never wiped. `devices` is re-sorted (kind, then name) before saving.
+    /// Nothing is written when the snapshot is unchanged. Returns what `body` returns.
     @discardableResult
     public func update<T>(_ body: (inout SnapshotFile) throws -> T) throws -> T {
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -59,10 +68,11 @@ public struct SnapshotCache: Sendable {
             writingItemAt: fileURL, options: .forMerging, error: &coordinationError
         ) { url in
             result = Result {
-                let existing = (try? Data(contentsOf: url)).flatMap(Self.decode)
+                let existing = try Self.loadForUpdate(url)
                 var file = existing ?? SnapshotFile()
                 let value = try body(&file)
                 file.formatVersion = SnapshotFile.currentFormatVersion
+                file.devices = SnapshotFile.sorted(file.devices)
                 if file != existing {
                     try Self.encode(file).write(to: url, options: .atomic)
                 }
@@ -72,6 +82,24 @@ public struct SnapshotCache: Sendable {
         if let coordinationError { throw coordinationError }
         guard let result else { throw CocoaError(.fileWriteUnknown) }
         return try result.get()
+    }
+
+    /// The current file for `update`: `nil` when missing or corrupt JSON; throws on
+    /// other read errors and on an unknown `formatVersion`.
+    static func loadForUpdate(_ url: URL) throws -> SnapshotFile? {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        guard let header = try? decoder.decode(Header.self, from: data) else { return nil }  // corrupt
+        guard header.formatVersion == SnapshotFile.currentFormatVersion else {
+            throw UpdateError.unsupportedFormatVersion(header.formatVersion)
+        }
+        return try? decoder.decode(SnapshotFile.self, from: data)  // corrupt body: start fresh
     }
 
     /// Deletes the file (account change, ADR-0009).

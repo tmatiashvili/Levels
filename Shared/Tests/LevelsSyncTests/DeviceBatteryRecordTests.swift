@@ -26,7 +26,7 @@ private func validRecord(name: String = UUID().uuidString.lowercased()) -> CKRec
     let model = DeviceBattery(id: DeviceID(recordName: name) ?? DeviceID(UUID()), name: "Phone", kind: .iphone,
                               level: 50, isCharging: false, updatedAt: now)
     let record = CKRecord(recordType: DeviceBatteryRecord.recordType, recordID: CKRecord.ID(recordName: name, zoneID: zone))
-    DeviceBatteryRecord.apply(model, to: record)
+    try! DeviceBatteryRecord.apply(model, to: record)
     return record
 }
 
@@ -35,7 +35,7 @@ struct DeviceBatteryRecordTests {
     @Test("AC1: model to record and back is lossless except serverModifiedAt")
     func ac1RoundTrip() throws {
         let original = fullAccessory()
-        let record = DeviceBatteryRecord.record(for: original, zoneID: zone)
+        let record = try DeviceBatteryRecord.record(for: original, zoneID: zone)
         #expect(record.recordID.recordName == original.id.recordName)
         #expect(record.recordID.zoneID.zoneName == "Levels")
         var expected = original
@@ -44,12 +44,12 @@ struct DeviceBatteryRecordTests {
 
         let phone = DeviceBattery(id: DeviceID(UUID()), name: "iPhone", kind: .iphone, level: 0,
                                   isCharging: false, isPluggedIn: false, isLowPowerMode: true, updatedAt: now)
-        #expect(DeviceBatteryRecord.model(from: DeviceBatteryRecord.record(for: phone, zoneID: zone)) == phone)
+        #expect(DeviceBatteryRecord.model(from: try DeviceBatteryRecord.record(for: phone, zoneID: zone)) == phone)
     }
 
     @Test("AC1: field types follow ADR-0005")
-    func fieldTypes() {
-        let record = DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
+    func fieldTypes() throws {
+        let record = try DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
         #expect(record["schemaVersion"] as? Int64 == 1)
         #expect(record["level"] as? Int64 == 42)
         #expect(record["isCharging"] as? Int64 == 1)
@@ -60,16 +60,16 @@ struct DeviceBatteryRecordTests {
     }
 
     @Test("AC2: nil level and isLowPowerMode leave the keys absent")
-    func ac2AbsentKeys() {
+    func ac2AbsentKeys() throws {
         let model = DeviceBattery(id: DeviceID(UUID()), name: "Mac mini", kind: .mac, level: nil,
                                   isCharging: false, isPluggedIn: true, isLowPowerMode: nil, updatedAt: now)
-        let record = DeviceBatteryRecord.record(for: model, zoneID: zone)
+        let record = try DeviceBatteryRecord.record(for: model, zoneID: zone)
         #expect(!record.allKeys().contains("level"))
         #expect(!record.allKeys().contains("isLowPowerMode"))
         #expect(!record.allKeys().contains("parentDeviceId"))
         // apply() also clears keys on an existing (server) record.
-        let existing = DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
-        DeviceBatteryRecord.apply(model, to: existing)
+        let existing = try DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
+        try DeviceBatteryRecord.apply(model, to: existing)
         #expect(!existing.allKeys().contains("level"))
         #expect(!existing.allKeys().contains("accessoryKind"))
     }
@@ -86,13 +86,13 @@ struct DeviceBatteryRecordTests {
     }
 
     @Test("AC4: unknown type decodes as other; unknown accessory fields fall back; unknown fields ignored")
-    func ac4Unknown() {
+    func ac4Unknown() throws {
         let record = validRecord()
         record["type"] = "vision"
         record["futureField"] = "x"
         #expect(DeviceBatteryRecord.model(from: record)?.kind == .other)
 
-        let acc = DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
+        let acc = try DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
         acc["accessoryKind"] = "pencil"
         acc["component"] = "stem"
         let model = DeviceBatteryRecord.model(from: acc)
@@ -114,7 +114,7 @@ struct DeviceBatteryRecordTests {
     }
 
     @Test("R5: each required field is required")
-    func r5Required() {
+    func r5Required() throws {
         for key in ["deviceId", "type", "isCharging", "updatedAt"] {
             let record = validRecord()
             record[key] = nil
@@ -127,7 +127,7 @@ struct DeviceBatteryRecordTests {
         let wrongType = CKRecord(recordType: "Other", recordID: CKRecord.ID(recordName: UUID().uuidString, zoneID: zone))
         #expect(DeviceBatteryRecord.model(from: wrongType) == nil)
 
-        let orphan = DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
+        let orphan = try DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
         orphan["parentDeviceId"] = nil
         #expect(DeviceBatteryRecord.model(from: orphan) == nil)
     }
@@ -142,8 +142,8 @@ struct DeviceBatteryRecordTests {
     }
 
     @Test("AC7: name is encrypted, not a plain field")
-    func ac7EncryptedName() {
-        let record = DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
+    func ac7EncryptedName() throws {
+        let record = try DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
         #expect(record.encryptedValues["name"] as? String == "Tamar's AirPods")
         // The plain subscript must not see it. (`allKeys()` lists encrypted keys too, so it can't be used here.)
         #expect(record["name"] == nil)
@@ -155,5 +155,25 @@ struct DeviceBatteryRecordTests {
         let name = UUID().uuidString  // upper case
         let model = DeviceBatteryRecord.model(from: validRecord(name: name))
         #expect(model?.id.recordName == name.lowercased())
+    }
+
+    @Test("Invariant: a model with an inconsistent accessory is refused, the record left untouched")
+    func inconsistentAccessoryRejected() throws {
+        var phoneWithAccessory = DeviceBattery(id: DeviceID(UUID()), name: "iPhone", kind: .iphone,
+                                               level: 50, isCharging: false, updatedAt: now)
+        phoneWithAccessory.accessory = fullAccessory().accessory
+        #expect(throws: DeviceBatteryRecord.MappingError.inconsistentAccessory(phoneWithAccessory.id)) {
+            try DeviceBatteryRecord.record(for: phoneWithAccessory, zoneID: zone)
+        }
+
+        var bareAccessory = fullAccessory()
+        bareAccessory.accessory = nil
+        let existing = try DeviceBatteryRecord.record(for: fullAccessory(), zoneID: zone)
+        let keysBefore = Set(existing.allKeys())
+        #expect(throws: DeviceBatteryRecord.MappingError.self) {
+            try DeviceBatteryRecord.apply(bareAccessory, to: existing)
+        }
+        #expect(Set(existing.allKeys()) == keysBefore)
+        #expect(existing["parentDeviceId"] != nil)
     }
 }

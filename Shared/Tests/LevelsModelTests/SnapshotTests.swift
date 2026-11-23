@@ -77,6 +77,51 @@ struct SnapshotTests {
         #expect(cache.read()?.devices.count == 200)
     }
 
+    @Test("update throws on an unreadable file and leaves it unchanged")
+    func unreadableFileNotWiped() throws {
+        let dir = try tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = SnapshotCache(directory: dir)
+        let own = DeviceID(UUID())
+        try cache.update { $0.ownDeviceID = own; $0.accountFingerprint = "abc" }
+        let before = try Data(contentsOf: cache.fileURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: cache.fileURL.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: cache.fileURL.path) }
+
+        #expect(throws: (any Error).self) { try cache.update { $0.lastFetchAt = now } }
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: cache.fileURL.path)
+        #expect(try Data(contentsOf: cache.fileURL) == before)
+        #expect(cache.read()?.ownDeviceID == own)
+    }
+
+    @Test("update never overwrites a newer formatVersion")
+    func newerFormatNotOverwritten() throws {
+        let dir = try tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = SnapshotCache(directory: dir)
+        try FileManager.default.createDirectory(at: cache.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let newer = Data(#"{"formatVersion":2,"devices":[],"lastWritten":{},"ownDeviceID":"x"}"#.utf8)
+        try newer.write(to: cache.fileURL)
+
+        #expect(throws: SnapshotCache.UpdateError.unsupportedFormatVersion(2)) {
+            try cache.update { $0.lastFetchAt = now }
+        }
+        #expect(try Data(contentsOf: cache.fileURL) == newer)
+    }
+
+    @Test("update keeps devices sorted even when body appends out of order")
+    func updateSorts() throws {
+        let dir = try tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = SnapshotCache(directory: dir)
+        let mac = battery(kind: .mac, name: "Mac")
+        let phoneB = battery(kind: .iphone, name: "B")
+        let phoneA = battery(kind: .iphone, name: "A")
+        try cache.update { $0.devices.append(contentsOf: [mac, phoneB, phoneA]) }
+        #expect(cache.read()?.devices == [phoneA, phoneB, mac])
+    }
+
     @Test("reset deletes the file")
     func reset() throws {
         let dir = try tempDirectory()

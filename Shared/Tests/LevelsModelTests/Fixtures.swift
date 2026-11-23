@@ -15,6 +15,9 @@ func battery(
     updatedAt: Date = now,
     serverModifiedAt: Date? = nil
 ) -> DeviceBattery {
-    DeviceBattery(id: id, name: name, kind: kind, level: level, isCharging: isCharging,
+    let accessory = kind == .accessory
+        ? AccessoryInfo(parentDeviceID: DeviceID(UUID()), kind: .airpods, groupID: UUID(), component: .left)
+        : nil
+    return DeviceBattery(id: id, name: name, kind: kind, accessory: accessory, level: level, isCharging: isCharging,
                   updatedAt: updatedAt, serverModifiedAt: serverModifiedAt)
 }

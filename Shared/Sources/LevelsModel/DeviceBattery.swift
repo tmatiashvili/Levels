@@ -77,7 +77,11 @@ public struct DeviceBattery: Identifiable, Hashable, Codable, Sendable {
     /// True when a newer app wrote this record (SYNC-002 R6).
     public var needsNewerApp: Bool { schemaVersion > Self.currentSchemaVersion }
 
+    /// True when `accessory` is non-nil exactly when `kind == .accessory`.
+    public var hasConsistentAccessory: Bool { (kind == .accessory) == (accessory != nil) }
+
     /// Creates a value. `level` is clamped to 0...100 (SYNC-002 R3).
+    /// - Precondition: `accessory` is non-nil iff `kind == .accessory`.
     public init(
         id: DeviceID,
         schemaVersion: Int = DeviceBattery.currentSchemaVersion,
@@ -102,6 +106,7 @@ public struct DeviceBattery: Identifiable, Hashable, Codable, Sendable {
         self.isLowPowerMode = isLowPowerMode
         self.updatedAt = updatedAt
         self.serverModifiedAt = serverModifiedAt
+        precondition(hasConsistentAccessory, "DeviceBattery: accessory must be non-nil iff kind == .accessory")
     }
 
     /// Clamps to 0...100 (SYNC-002 R3).

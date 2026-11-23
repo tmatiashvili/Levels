@@ -25,18 +25,30 @@ public enum DeviceBatteryRecord {
         public static let name = "name"
     }
 
-    private static let logger = Logger(subsystem: (Bundle.main.bundleIdentifier ?? "levels"), category: "sync")
+    /// Why a model can't be written.
+    public enum MappingError: Error, Equatable {
+        /// `accessory` is set on a non-accessory, or missing on an accessory. Every reader would skip it.
+        case inconsistentAccessory(DeviceID)
+    }
+
+    private static let logger = Logger(subsystem: LevelsLog.subsystem, category: LevelsLog.syncCategory)
 
     /// A fresh record named by the model's ID in `zoneID` (ADR-0008: no change tag).
-    public static func record(for model: DeviceBattery, zoneID: CKRecordZone.ID) -> CKRecord {
+    /// Throws for a model that readers would skip.
+    public static func record(for model: DeviceBattery, zoneID: CKRecordZone.ID) throws(MappingError) -> CKRecord {
         let record = CKRecord(recordType: recordType, recordID: CKRecord.ID(recordName: model.id.recordName, zoneID: zoneID))
-        apply(model, to: record)
+        try apply(model, to: record)
         return record
     }
 
     /// Writes every field of `model` into `record`, removing keys whose value is `nil`.
     /// Used for new records and for the accessory conflict retry on the server copy.
-    public static func apply(_ model: DeviceBattery, to record: CKRecord) {
+    /// Throws, leaving `record` untouched, for a model that readers would skip.
+    public static func apply(_ model: DeviceBattery, to record: CKRecord) throws(MappingError) {
+        guard model.hasConsistentAccessory else {
+            logger.fault("Refusing to write record \(model.id.recordName, privacy: .public): inconsistent accessory")
+            throw .inconsistentAccessory(model.id)
+        }
         record[Field.schemaVersion] = Int64(model.schemaVersion)
         record[Field.deviceId] = model.id.recordName
         record[Field.type] = model.kind.rawValue
