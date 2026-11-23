@@ -44,7 +44,7 @@ SPIKE-001, SYNC-001 and everything iPhone, iPad and Watch wait for enrollment. T
 | ID | Title | Milestone | Status | Depends on |
 |---|---|---|---|---|
 | [MAC-003](MAC-003-mac-accessory-reporting.md) | Mac accessory reporting | v0.3 | Outline | MAC-001, MAC-002, SYNC-001, SYNC-002 |
-| [ALR-001](ALR-001-low-battery-alerts.md) | Low-battery alerts | v0.4 | Outline | SYNC-001, SYNC-002, RPT-001 |
+| [ALR-001](ALR-001-low-battery-alerts.md) | Low-battery alerts | v0.4 | Ready (Mac-first local; iCloud part Outline) | SYNC-002, MAC-001, MAC-003 |
 | [HIS-001](HIS-001-history-and-charts.md) | 7-day history, charts and low-power-mode tracking (Mac, local only) | v0.5 | Ready | SYNC-002, MAC-002, MAC-003, UI-001, UI-004 |
 | [NRB-001](NRB-001-ble-nearby-mode.md) | BLE nearby mode (Mac to iPhone without the cloud) | later | Outline | SYNC-001, MAC-001, RPT-001 |
 | [FAM-001](FAM-001-family-sharing.md) | Family sharing | later | Outline | SYNC-001, SYNC-002 |
