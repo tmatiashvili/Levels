@@ -221,7 +221,8 @@ public actor LocalOnlySyncService: BatterySyncing {
     /// writer already throttled (ADR-0008 on the iPhone).
     ///
     /// `replacingAllExcept: nil` = partial (keep everything else). Non-nil = full: drop
-    /// entries the incoming set lacks, except the IDs given (the own device). Runs under the
+    /// entries the incoming set lacks, except the IDs given (the own device, whose local copy
+    /// also always wins over the incoming one: `SnapshotFile.merge`). Runs under the
     /// serial gate. Does nothing while reporting is off (NET-001 R10). Returns whether
     /// `devices` changed.
     @discardableResult
@@ -234,7 +235,7 @@ public actor LocalOnlySyncService: BatterySyncing {
             let (before, after) = try await Task.detached(priority: .utility) {
                 try cache.update { file in
                     let before = SnapshotFile.sorted(file.devices)
-                    file.merge(fetched: records, isFullFetch: keep != nil, pendingOwnIDs: keep ?? [])
+                    file.merge(fetched: records, isFullFetch: keep != nil, ownIDs: keep ?? [])
                     return (before, file.devices)
                 }
             }.value

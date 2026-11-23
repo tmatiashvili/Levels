@@ -61,7 +61,9 @@ struct PhoneWidgetView: View {
 
 // MARK: - Lock Screen families (UI-003 R3, R8, R9)
 
-/// `accessoryCircular`: one device as a capacity gauge, device symbol as label, % as value.
+/// `accessoryCircular`: one device as a capacity gauge with the device symbol inside and the
+/// level under it ("⚡85" while charging). Colours turn white on the Lock Screen (R9), so the
+/// state is a symbol.
 struct CircularDeviceView: View {
     let entry: DeviceEntry
 
@@ -69,18 +71,33 @@ struct CircularDeviceView: View {
         ZStack {
             AccessoryWidgetBackground()
             if let row = entry.singleDevice, let level = row.level {
+                let stale = row.freshness(at: entry.date) == .stale
                 Gauge(value: Double(level), in: 0...100) {
-                    DeviceSymbol(row: row)
+                    EmptyView()
                 } currentValueLabel: {
-                    Text("\(level)").monospacedDigit()
+                    VStack(spacing: 0) {
+                        AccessoryGlyph(row: row, size: 17)
+                        Group {
+                            if row.showsChargingBolt(at: entry.date) {
+                                Text("\(Image(systemName: "bolt.fill"))\(level)")
+                            } else if stale {
+                                Text("\(Image(systemName: "clock"))\(level)")
+                            } else {
+                                Text(verbatim: "\(level)")
+                            }
+                        }
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                    }
                 }
                 .gaugeStyle(.accessoryCircularCapacity)
                 .widgetAccentable()
-                .opacity(row.freshness(at: entry.date) == .stale ? 0.5 : 1)
+                .opacity(stale ? 0.6 : 1)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(RowText.accessibilityLabel(for: row, now: entry.date))
                 .widgetURL(LevelsAppConfig.deviceURL(row.id))  // UI-003 R7
             } else if let row = entry.singleDevice {  // no battery (UI-001 R5a)
-                DeviceSymbol(row: row)
+                AccessoryGlyph(row: row, size: 22)
                     .accessibilityLabel(RowText.accessibilityLabel(for: row, now: entry.date))
                     .widgetURL(LevelsAppConfig.deviceURL(row.id))
             } else {
@@ -90,7 +107,23 @@ struct CircularDeviceView: View {
     }
 }
 
-/// `accessoryRectangular`: up to 3 devices in UI-001 order, symbol, % and a mini bar.
+/// The device symbol in a fixed square box, so every device sits on the same line.
+struct AccessoryGlyph: View {
+    let row: DeviceRowModel
+    let size: CGFloat
+
+    var body: some View {
+        Image(systemName: DeviceSymbol.symbolName(kind: row.kind, accessoryKind: row.accessoryKind,
+                                                  hasBattery: row.hasBattery))
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+/// `accessoryRectangular`: up to 3 devices in UI-001 order: symbol, "85%", a mini bar and a
+/// state symbol (bolt, clock when stale, ! when low).
 struct RectangularDevicesView: View {
     let entry: DeviceEntry
 
@@ -109,28 +142,33 @@ struct RectangularDevicesView: View {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(rows) { row in
                     let stale = row.freshness(at: entry.date) == .stale
-                    HStack(spacing: 4) {
-                        DeviceSymbol(row: row)
+                    HStack(spacing: 5) {
+                        AccessoryGlyph(row: row, size: 15)
                             .widgetAccentable()
-                            .frame(width: 16)
                         if let level = row.level {
-                            Text(RowText.percent(level))
-                                .font(.caption.weight(.semibold))
+                            Text(verbatim: WidgetText.percent(level))
+                                .font(.system(.caption, design: .rounded).weight(.semibold))
                                 .monospacedDigit()
-                                .frame(minWidth: 36, alignment: .leading)
+                                .frame(width: 34, alignment: .leading)
                             Gauge(value: Double(level), in: 0...100) { EmptyView() }
                                 .gaugeStyle(.accessoryLinearCapacity)
                                 .widgetAccentable()
                             // R9: colours turn white on the Lock Screen, so state is a symbol.
-                            if stale {
-                                Image(systemName: "clock").font(.caption2)
-                            } else if row.showsChargingBolt(at: entry.date) {
-                                Image(systemName: "bolt.fill").font(.caption2)
-                            } else if row.isLow {
-                                Image(systemName: "exclamationmark").font(.caption2.bold())
+                            Group {
+                                if stale {
+                                    Image(systemName: "clock")
+                                } else if row.showsChargingBolt(at: entry.date) {
+                                    Image(systemName: "bolt.fill")
+                                } else if row.isLow {
+                                    Image(systemName: "exclamationmark")
+                                } else {
+                                    Image(systemName: "bolt.fill").hidden()
+                                }
                             }
+                            .font(.caption2.bold())
+                            .frame(width: 10)
                         } else {
-                            Text(RowText.noBattery()).font(.caption2)
+                            Text(RowText.noBattery()).font(.caption2).lineLimit(1)
                         }
                     }
                     .opacity(stale ? 0.6 : 1)
@@ -149,18 +187,19 @@ struct RectangularDevicesView: View {
     }
 }
 
-/// `accessoryInline`: "[symbol] iPhone 62% · 5 min" (symbol + name + % + short age).
+/// `accessoryInline`: "[symbol] MacBook Pro 62% · 5 min" (short name + % + short age).
 struct InlineDeviceView: View {
     let entry: DeviceEntry
 
     var body: some View {
         if let row = entry.singleDevice {
             let symbol = DeviceSymbol.symbolName(kind: row.kind, accessoryKind: row.accessoryKind, hasBattery: row.hasBattery)
-            let level = row.level.map { RowText.percent($0) } ?? "—"
+            let name = WidgetText.compactName(row.name)
+            let level = row.level.map(WidgetText.percent) ?? "—"
             let age = Text(.currentDate, format: .reference(to: row.readingDate(now: entry.date),
-                                                            allowedFields: [.minute, .hour, .day]))
+                                                            allowedFields: [.minute, .hour, .day], maxFieldCount: 1))
             Label {
-                Text("\(row.name) \(level) · \(age)")
+                Text("\(name) \(level) · \(age)")
             } icon: {
                 Image(systemName: symbol)
             }

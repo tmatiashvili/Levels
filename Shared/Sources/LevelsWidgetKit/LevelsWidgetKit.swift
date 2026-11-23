@@ -284,27 +284,25 @@ struct EmptyWidgetView: View {
     }
 }
 
-/// `systemSmall`: one device, symbol + name, large ring with %, age (UI-003 R3).
+/// `systemSmall`: one device, as a large ring with its symbol inside, the percentage, its
+/// name and, when relevant, a status line (UI-003 R3, owner's widget review).
 struct SmallDeviceView: View {
     let entry: DeviceEntry
 
     var body: some View {
         if let row = entry.singleDevice {
-            let stale = row.freshness(at: entry.date) == .stale
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
-                    DeviceSymbol(row: row).widgetAccentable()
-                    Text(row.name).font(.caption.weight(.semibold)).lineLimit(1)
-                }
+            VStack(spacing: 0) {
                 Spacer(minLength: 0)
-                HStack {
-                    Spacer(minLength: 0)
-                    WidgetLevel(row: row, now: entry.date, ringSize: 64, font: .title3)
-                    Spacer(minLength: 0)
-                }
+                DeviceRing(row: row, now: entry.date, metrics: .small)
+                Spacer(minLength: 6)
+                PercentText(row: row, now: entry.date,
+                            font: .system(.title2, design: .rounded).weight(.semibold))
+                ShortName(row: row, font: .caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                StatusLine(status: WidgetStatus.of(row, now: entry.date))
                 Spacer(minLength: 0)
-                AgeLine(date: row.readingDate(now: entry.date), stale: stale)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(RowText.accessibilityLabel(for: row, now: entry.date))
             .widgetURL(LevelsAppConfig.deviceURL(row.id))  // UI-003 R7, UI-004 R14
@@ -312,34 +310,52 @@ struct SmallDeviceView: View {
     }
 }
 
-/// `systemMedium`: up to 4 devices in a row of rings, one shared age line for the oldest
-/// shown reading (UI-003 R3). Each item is a `Link` to its device (UI-003 R7).
+/// `systemMedium`: up to 4 devices as equal columns (ring with symbol, percentage, name), UI-001
+/// order. A status line shows under a device only when it has something to say; then every
+/// column keeps that line's height so rings and text stay level (owner's widget review). Each
+/// column is a `Link` to its device (UI-003 R7).
 struct MediumDevicesView: View {
     let entry: DeviceEntry
 
     var body: some View {
         let shown = entry.mediumRows
-        let oldest = shown.map { $0.readingDate(now: entry.date) }.min() ?? entry.date
-        VStack(spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
+        let anyStatus = shown.contains { WidgetStatus.of($0, now: entry.date) != nil }
+        VStack(spacing: 6) {
+            Spacer(minLength: 0)
+            HStack(alignment: .top, spacing: 6) {
                 ForEach(shown) { row in
                     Link(destination: LevelsAppConfig.deviceURL(row.id)) {
-                        VStack(spacing: 4) {
-                            DeviceSymbol(row: row).widgetAccentable()
-                            WidgetLevel(row: row, now: entry.date, ringSize: 44, font: .caption.weight(.semibold))
-                            Text(row.name).font(.caption2)  // full name; tail-truncated if it won't fit
-                                .lineLimit(1).truncationMode(.tail).minimumScaleFactor(0.8)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(RowText.accessibilityLabel(for: row, now: entry.date))
-                        .foregroundStyle(.primary)  // accented mode must not tint links blue
+                        DeviceColumn(row: row, now: entry.date, metrics: .medium,
+                                     percentFont: .system(.subheadline, design: .rounded).weight(.semibold),
+                                     nameFont: .caption2, reserveStatus: anyStatus)
+                            .foregroundStyle(.primary)  // accented mode must not tint links blue
                     }
                 }
             }
-            AgeLine(date: oldest, stale: shown.contains { $0.freshness(at: entry.date) == .stale })
-            if let away = entry.awayFooterDate { AwayFooter(lastContact: away) }
+            Spacer(minLength: 0)
+            if let away = entry.awayFooterDate {
+                AwayFooter(lastContact: away)
+            } else if entry.isOnlyThisDevice {
+                OnlyThisDeviceHint()
+            }
         }
+    }
+}
+
+/// UI-003 R8 / NET-004 R12: why only this device is shown.
+struct OnlyThisDeviceHint: View {
+    var body: some View {
+        Group {
+            #if os(iOS)
+            Text(String(localized: "Your Mac appears when it connects"))
+            #else
+            Text(String(localized: "Other devices appear when they run Levels"))
+            #endif
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
     }
 }
 
@@ -395,15 +411,7 @@ public struct LargeDevicesView: View {
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding(.top, 4)
             } else if entry.isOnlyThisDevice {
-                #if os(iOS)
-                Text(String(localized: "Your Mac appears when it connects"))  // NET-004 R12
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .padding(.top, 6)
-                #else
-                Text(String(localized: "Other devices appear when they run Levels"))
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .padding(.top, 6)
-                #endif
+                OnlyThisDeviceHint().padding(.top, 6)  // NET-004 R12
             }
             Spacer(minLength: 0)
             if let away = entry.awayFooterDate { AwayFooter(lastContact: away) }
@@ -412,118 +420,25 @@ public struct LargeDevicesView: View {
     }
 }
 
-/// One `systemLarge` row: compact form of the UI-001 row, with the widget age text (ADR-0017).
+/// One `systemLarge` row: small ring with the symbol, name and (when relevant) status, and the
+/// percentage at the trailing edge (owner's widget review).
 struct LargeDeviceRow: View {
     let row: DeviceRowModel
     let now: Date
 
     var body: some View {
-        let stale = row.freshness(at: now) == .stale
-        HStack(spacing: 8) {
-            DeviceSymbol(row: row).widgetAccentable().frame(width: 22)
+        HStack(spacing: 10) {
+            DeviceRing(row: row, now: now, metrics: .large)
             VStack(alignment: .leading, spacing: 1) {
-                Text(row.name).font(.caption.weight(.medium)).lineLimit(1)
-                AgeLine(date: row.readingDate(now: now), stale: stale)
+                Text(row.name).font(.subheadline.weight(.medium)).lineLimit(1)
+                StatusLine(status: WidgetStatus.of(row, now: now), alignment: .leading)
             }
             Spacer(minLength: 6)
-            if let level = row.level {
-                HStack(spacing: 5) {
-                    if row.isLow { Text(RowText.low()).font(.caption2.bold()).foregroundStyle(.red) }
-                    if row.showsChargingBolt(at: now) { Image(systemName: "bolt.fill").font(.caption2).foregroundStyle(.green) }
-                    LevelBar(level: level, isLow: row.isLow).frame(width: 64, height: 6)
-                    Text(RowText.percent(level)).font(.caption.weight(.semibold)).monospacedDigit()
-                        .frame(minWidth: 34, alignment: .trailing)
-                }
-                .opacity(stale ? 0.5 : 1)  // UI-001 R6
-            } else {
-                Text(RowText.noBattery()).font(.caption2).foregroundStyle(.secondary)  // UI-001 R5a
-            }
+            PercentText(row: row, now: now, font: .system(.subheadline, design: .rounded).weight(.semibold))
         }
-        .padding(.vertical, 3)
+        .frame(minHeight: 34)
+        .padding(.vertical, 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(RowText.accessibilityLabel(for: row, now: now))
-    }
-}
-
-/// A ring drawn at any size, with no label of its own: the percentage is shown once, by the
-/// caller. (`BatteryRing`'s `.accessoryCircularCapacity` gauge has a fixed size and its own label.)
-struct WidgetRing: View {
-    let level: Int
-    let isCharging: Bool
-    let isLow: Bool
-
-    var body: some View {
-        let width = 5.0
-        ZStack {
-            Circle().stroke(.quaternary, lineWidth: width)
-            Circle()
-                .trim(from: 0, to: CGFloat(min(max(level, 0), 100)) / 100)
-                .stroke(isCharging ? Color.green : isLow ? Color.red : Color.primary,
-                        style: StrokeStyle(lineWidth: width, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .widgetAccentable()
-        }
-        .padding(width / 2)
-        .accessibilityHidden(true)
-    }
-}
-
-/// Horizontal capacity bar for `systemLarge` rows; the fill is accentable (UI-003 R9).
-struct LevelBar: View {
-    let level: Int
-    let isLow: Bool
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary)
-                Capsule().fill(isLow ? Color.red : Color.green)
-                    .frame(width: max(geo.size.height, geo.size.width * CGFloat(min(max(level, 0), 100)) / 100))
-                    .widgetAccentable()
-            }
-        }
-        .accessibilityHidden(true)
-    }
-}
-
-/// Ring + percentage, or "no battery" (UI-001 R5a); dimmed when stale (R6).
-struct WidgetLevel: View {
-    let row: DeviceRowModel
-    let now: Date
-    let ringSize: CGFloat
-    let font: Font
-
-    var body: some View {
-        let stale = row.freshness(at: now) == .stale
-        if let level = row.level {
-            ZStack {
-                WidgetRing(level: level, isCharging: row.showsChargingBolt(at: now), isLow: row.isLow)
-                    .frame(width: ringSize, height: ringSize)
-                VStack(spacing: 0) {
-                    Text(RowText.percent(level)).font(font).monospacedDigit().minimumScaleFactor(0.6)
-                    if row.isLow { Text(RowText.low()).font(.caption2.bold()) }
-                    else if row.showsChargingBolt(at: now) { Image(systemName: "bolt.fill").font(.caption2) }
-                }
-            }
-            .opacity(stale ? 0.5 : 1)
-        } else {
-            Text(RowText.noBattery()).font(.caption2).multilineTextAlignment(.center).foregroundStyle(.secondary)
-        }
-    }
-}
-
-/// Self-updating age text (ADR-0017 rule 2) with the stale `clock` badge (rule 5).
-struct AgeLine: View {
-    let date: Date
-    let stale: Bool
-
-    var body: some View {
-        HStack(spacing: 3) {
-            if stale { Image(systemName: "clock") }
-            Text(.currentDate, format: .reference(to: date, allowedFields: [.minute, .hour, .day]))
-        }
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
     }
 }

@@ -208,4 +208,48 @@ struct HubWidgetPlanTests {
         let notPaired = DeviceEntry(date: now, snapshot: cached(lastFetch: nil, status: .notPaired), preferences: DisplayPreferences())
         #expect(notPaired.isNotPaired && notPaired.awayFooterDate == nil)
     }
+
+    // MARK: Owner's widget review 2026-11-24
+
+    @Test func percentHasNoSpaceInAnyLocale() {
+        #expect(WidgetText.percent(85) == "85%")
+        #expect(WidgetText.percent(100) == "100%")
+    }
+
+    @Test func namesShortenFromFullToKind() {
+        #expect(WidgetText.nameCandidates(name: "Tornike’s MacBook Pro (2)", kind: .mac, accessoryKind: nil, hasBattery: true)
+                == ["Tornike’s MacBook Pro (2)", "MacBook Pro (2)", "MacBook Pro", "MacBook"])
+        #expect(WidgetText.nameCandidates(name: "Ann's iMac", kind: .mac, accessoryKind: nil, hasBattery: false)
+                == ["Ann's iMac", "iMac", "Mac"])
+        #expect(WidgetText.nameCandidates(name: "iPhone", kind: .iphone, accessoryKind: nil, hasBattery: true) == ["iPhone"])
+        #expect(WidgetText.nameCandidates(name: "TPods", kind: .accessory, accessoryKind: .airpods, hasBattery: true)
+                == ["TPods", "AirPods"])
+        #expect(WidgetText.compactName("Tornike’s MacBook Pro (2)") == "MacBook Pro")
+        #expect(WidgetText.compactName("Tornike’s") == "Tornike’s")
+    }
+
+    /// The owner's screenshot: iPhone charging and current, AirPods last seen 76 min ago, Mac
+    /// current. Only the AirPods get a status line; the iPhone has none (it said "1 hour ago").
+    @Test func statusOnlyForStaleDevices() {
+        let group = UUID()
+        func pod(_ n: Int, _ c: AccessoryComponent, _ level: Int) -> DeviceBattery {
+            DeviceBattery(id: id(n), name: "TPods", kind: .accessory,
+                          accessory: AccessoryInfo(parentDeviceID: id(2), kind: .airpods, groupID: group, component: c),
+                          level: level, isCharging: false, updatedAt: now - 76 * 60)
+        }
+        let e = reviewEntry([d(1, .iphone, "iPhone", 85, age: 90, charging: true), d(2, .mac, "Tornike’s MacBook Pro (2)", 80, age: 110),
+                       pod(10, .left, 100), pod(11, .right, 100), pod(12, .case, 45)])
+        let byName = Dictionary(uniqueKeysWithValues: e.mediumRows.map { ($0.name, WidgetStatus.of($0, now: now)) })
+        #expect(byName["iPhone"] == .some(nil))
+        #expect(byName["Tornike’s MacBook Pro (2)"] == .some(nil))
+        #expect(byName["TPods"] == .notConnected)
+        let staleIPad = reviewEntry([d(4, .ipad, "iPad", 14, age: 3 * 3600)]).rows[0]
+        #expect(WidgetStatus.of(staleIPad, now: now) == .lastSeen(now - 3 * 3600))
+        let desktop = reviewEntry([d(5, .mac, "iMac", nil)]).rows[0]
+        #expect(WidgetStatus.of(desktop, now: now) == .noBattery)
+    }
+}
+
+private func reviewEntry(_ devices: [DeviceBattery]) -> DeviceEntry {
+    DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: devices), preferences: DisplayPreferences())
 }

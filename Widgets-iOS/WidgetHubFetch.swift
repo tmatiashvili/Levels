@@ -33,7 +33,7 @@ enum WidgetHubFetch {
             }
             let now = Date()
             let merge: (inout SnapshotFile) -> Void = { file in
-                file.merge(fetched: snapshot.devices, isFullFetch: true, pendingOwnIDs: [me])
+                file.merge(fetched: snapshot.devices, isFullFetch: true, ownIDs: [me])
                 file.lastFetchAt = now
                 file.syncStatus = .localOnly
             }

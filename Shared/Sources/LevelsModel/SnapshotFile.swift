@@ -70,17 +70,24 @@ public struct SnapshotFile: Codable, Sendable, Equatable {
     ///
     /// Per ID the entry with the newer `updatedAt` wins; on a tie the fetched one wins
     /// (it carries `serverModifiedAt`). If `isFullFetch`, entries the fetch did not
-    /// return are dropped unless their ID is in `pendingOwnIDs`.
-    public mutating func merge(fetched: [DeviceBattery], isFullFetch: Bool, pendingOwnIDs: Set<DeviceID>) {
+    /// return are dropped unless their ID is in `ownIDs`.
+    ///
+    /// `ownIDs` are this device's records: their local copy always wins over a fetched one,
+    /// even on a tie. Only this device writes them, so the hub's copy is at best the same
+    /// reading echoed back (stamped with the hub's clock) and at worst an older one; the
+    /// fetched copy is taken only when there is no local copy yet.
+    public mutating func merge(fetched: [DeviceBattery], isFullFetch: Bool, ownIDs: Set<DeviceID>) {
         var byID = Dictionary(devices.map { ($0.id, $0) }, uniquingKeysWith: { a, b in a.updatedAt >= b.updatedAt ? a : b })
         var fetchedIDs = Set<DeviceID>()
         for new in fetched {
             fetchedIDs.insert(new.id)
-            if let old = byID[new.id], old.updatedAt > new.updatedAt { continue }
+            if let old = byID[new.id] {
+                if ownIDs.contains(new.id) || old.updatedAt > new.updatedAt { continue }
+            }
             byID[new.id] = new
         }
         if isFullFetch {
-            byID = byID.filter { fetchedIDs.contains($0.key) || pendingOwnIDs.contains($0.key) }
+            byID = byID.filter { fetchedIDs.contains($0.key) || ownIDs.contains($0.key) }
         }
         devices = Self.sorted(Array(byID.values))
     }

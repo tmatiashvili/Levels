@@ -156,7 +156,7 @@ struct SnapshotTests {
         var newA = a
         newA.updatedAt = now
         newA.level = 20
-        file.merge(fetched: [newA], isFullFetch: true, pendingOwnIDs: [o.id])
+        file.merge(fetched: [newA], isFullFetch: true, ownIDs: [o.id])
         #expect(Set(file.devices) == [newA, o])
     }
 
@@ -167,10 +167,43 @@ struct SnapshotTests {
         fetched.updatedAt = now - minute
         fetched.level = 90
         var file = SnapshotFile(devices: [cached])
-        file.merge(fetched: [fetched], isFullFetch: false, pendingOwnIDs: [])
+        file.merge(fetched: [fetched], isFullFetch: false, ownIDs: [])
         #expect(file.devices == [cached])
-        file.merge(fetched: [fetched], isFullFetch: true, pendingOwnIDs: [])
+        file.merge(fetched: [fetched], isFullFetch: true, ownIDs: [])
         #expect(file.devices == [cached])
+    }
+
+    @Test("Own record: the local copy always wins over the hub's copy (owner's '1 hour ago' report)")
+    func ownRecordKeepsLocalCopy() {
+        let local = battery(kind: .iphone, name: "iPhone", level: 85, isCharging: true, updatedAt: now)
+        // The hub echoes an older reading of this iPhone, and the same reading stamped with its own clock.
+        var older = local
+        older.level = 40
+        older.isCharging = false
+        older.updatedAt = now - hour
+        var echoed = local
+        echoed.serverModifiedAt = now - hour  // a hub clock behind ours would age the reading
+        var future = local
+        future.updatedAt = now + minute
+        future.level = 10
+        for hubCopy in [older, echoed, future] {
+            for full in [false, true] {
+                var file = SnapshotFile(devices: [local])
+                file.merge(fetched: [hubCopy], isFullFetch: full, ownIDs: [local.id])
+                #expect(file.devices == [local])
+            }
+        }
+        // With no local copy yet (fresh install), the hub's copy is taken.
+        var empty = SnapshotFile()
+        empty.merge(fetched: [older], isFullFetch: true, ownIDs: [local.id])
+        #expect(empty.devices == [older])
+        // Other devices still take the newer or tied fetched copy.
+        let mac = battery(kind: .mac, name: "Mac", updatedAt: now - minute)
+        var newerMac = mac
+        newerMac.updatedAt = now
+        var file = SnapshotFile(devices: [local, mac])
+        file.merge(fetched: [newerMac, older], isFullFetch: true, ownIDs: [local.id])
+        #expect(Set(file.devices) == [local, newerMac])
     }
 
     @Test("R14: partial fetch keeps unreturned entries and adds new ones; devices sorted by kind then name")
@@ -179,7 +212,7 @@ struct SnapshotTests {
         let phoneB = battery(kind: .iphone, name: "b phone")
         let phoneA = battery(kind: .iphone, name: "A phone")
         var file = SnapshotFile(devices: [mac])
-        file.merge(fetched: [phoneB, phoneA], isFullFetch: false, pendingOwnIDs: [])
+        file.merge(fetched: [phoneB, phoneA], isFullFetch: false, ownIDs: [])
         #expect(file.devices == [phoneA, phoneB, mac])
     }
 }
