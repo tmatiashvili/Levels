@@ -68,12 +68,8 @@ public actor LocalOnlySyncService: BatterySyncing {
 
     // MARK: BatterySyncing
 
-    /// Always `.idle`: there is no account or network state to report.
-    /// `SyncStatus` has no local-only case yet; see ``isLocalOnly``.
-    public var status: SyncStatus { .idle }
-
-    /// True for this stand-in; the UI uses it to say "local only, no iCloud".
-    public nonisolated var isLocalOnly: Bool { true }
+    /// Always ``SyncStatus/localOnly``: there is no account or network state to report.
+    public var status: SyncStatus { .localOnly }
 
     /// Writes each reading into the cache per ``LocalWritePolicy``, judged per record.
     /// The first non-accessory reading is this device (`ownDeviceID`).
@@ -129,15 +125,15 @@ public actor LocalOnlySyncService: BatterySyncing {
         let cache = cache
         do {
             try await Task.detached(priority: .utility) {
-                try cache.update { $0.syncStatus = .idle }
+                try cache.update { $0.syncStatus = .localOnly }
             }.value
         } catch {
             Self.logger.error("Cache update failed: \(String(describing: error), privacy: .public)")
         }
     }
 
-    /// There is nothing to fetch: re-reads the cache and returns whether it is readable.
-    /// The UI reloads from the cache itself; this keeps SYNC-001's `refresh(_:)` call shape.
+    /// There is nothing to fetch: re-reads the cache and returns whether it is readable
+    /// (``BatterySyncing/refresh(_:)``). The UI reloads from the cache itself.
     @discardableResult
     public func refresh(_ reason: RefreshReason) async -> Bool {
         let cache = cache
@@ -165,7 +161,7 @@ public actor LocalOnlySyncService: BatterySyncing {
                     }
                     file.devices = SnapshotFile.sorted(file.devices)
                     if let ownID { file.ownDeviceID = ownID }
-                    file.syncStatus = .idle
+                    file.syncStatus = .localOnly
                     return file.devices != SnapshotFile.sorted(before)
                 }
             }.value

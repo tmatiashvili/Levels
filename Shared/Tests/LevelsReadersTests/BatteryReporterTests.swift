@@ -23,6 +23,8 @@ actor FakeSync: BatterySyncing {
     }
 
     var status: SyncStatus { currentStatus }
+    private(set) var refreshes: [RefreshReason] = []
+    func refresh(_ reason: RefreshReason) async -> Bool { refreshes.append(reason); return true }
     var reasons: [ReportReason] { calls.map(\.reason) }
     func set(outcome: ReportOutcome) { self.outcome = outcome }
     func set(status: SyncStatus) { currentStatus = status }
@@ -290,5 +292,25 @@ struct BatteryReporterTests {
         ReportLog(suiteName: suite).record(.appIntent, at: at)
         #expect(ReportLog(suiteName: suite).lastReport(.appIntent) == at)
         #expect(UserDefaults(suiteName: suite)?.dictionary(forKey: ReportLog.key)?["appIntent"] as? Date == at)
+    }
+
+    @Test func identityAndPreferencesInit_usesKeychainIDAndRename() async {
+        let prefs = InMemoryDisplayPreferencesStore(DisplayPreferences(thisDeviceName: "Work Mac"))
+        let r = BatteryReporter(reader: FixedBatteryReader(reading(40)), sync: sync, kind: .mac,
+                                identity: FixedDeviceIdentity(id), preferences: prefs, clock: clock)
+        await r.report(reason: .userRefresh)
+        prefs.save(DisplayPreferences(thisDeviceName: nil))
+        await r.report(reason: .wake)
+        let names = await sync.calls.map { $0.devices[0].name }
+        #expect(await sync.calls.allSatisfy { $0.devices[0].id == id })
+        #expect(names.first == "Work Mac")
+        #expect(names.last != "Work Mac" && names.last?.isEmpty == false)  // default name again
+    }
+
+    @Test func identityNil_skipsReport() async {
+        let r = BatteryReporter(reader: FixedBatteryReader(reading(40)), sync: sync, kind: .mac,
+                                identity: FixedDeviceIdentity(nil), preferences: InMemoryDisplayPreferencesStore(), clock: clock)
+        #expect(await r.report(reason: .userRefresh) == nil)
+        #expect(await sync.calls.isEmpty)
     }
 }

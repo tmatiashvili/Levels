@@ -1,10 +1,7 @@
 import Foundation
-import LevelsModel
 
-/// The one sort order every surface uses (UI-001 R1, ADR-0016 rule 5).
-///
-/// UI-001 Design places this in `LevelsModel`; it lives in `LevelsUI` for now (widgets
-/// link `LevelsUI`, so they can still call it).
+/// The one sort order every surface uses (UI-001 R1, ADR-0016 rule 5). In `LevelsModel`
+/// (UI-001 Design) so reporters, widgets and the UI share it.
 public enum DeviceOrdering {
     /// Hidden devices removed (R2); this device first; then level ascending with
     /// `level == nil` last; ties by name (localised, case-insensitive), then `deviceId`.
@@ -24,25 +21,26 @@ public enum DeviceOrdering {
         return false
     }
 
-    struct SortKey {
-        var isThisDevice: Bool
-        var level: Int?
-        var name: String
-        var id: DeviceID
+    /// What the order compares; ``DeviceRows`` (LevelsUI) builds one per row.
+    public struct SortKey: Sendable {
+        public var isThisDevice: Bool
+        public var level: Int?
+        public var name: String
+        public var id: DeviceID
 
-        init(isThisDevice: Bool, level: Int?, name: String, id: DeviceID) {
+        public init(isThisDevice: Bool, level: Int?, name: String, id: DeviceID) {
             self.isThisDevice = isThisDevice
             self.level = level
             self.name = name
             self.id = id
         }
 
-        init(_ d: DeviceBattery, thisDeviceID: DeviceID?) {
+        public init(_ d: DeviceBattery, thisDeviceID: DeviceID?) {
             self.init(isThisDevice: d.id == thisDeviceID, level: d.level, name: d.name, id: d.id)
         }
     }
 
-    static func precedes(_ a: SortKey, _ b: SortKey) -> Bool {
+    public static func precedes(_ a: SortKey, _ b: SortKey) -> Bool {
         if a.isThisDevice != b.isThisDevice { return a.isThisDevice }
         switch (a.level, b.level) {
         case let (x?, y?) where x != y: return x < y

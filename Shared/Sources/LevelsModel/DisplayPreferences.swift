@@ -1,12 +1,9 @@
 import Foundation
-import LevelsModel
 import Synchronization
 
 /// Per-device display choices (UI-001 R2, R3). Local to the device where they were made;
-/// never synced.
-///
-/// UI-001 Design places this type in `LevelsModel`; it lives in `LevelsUI` until
-/// `LevelsModel` adopts it (reporters need `thisDeviceName`, SYNC-002 R17).
+/// never synced. In `LevelsModel` (UI-001 Design) because reporters read `thisDeviceName`
+/// (SYNC-002 R17).
 public struct DisplayPreferences: Codable, Sendable, Equatable {
     /// Devices (or accessory groups, by group ID) hidden on this device (R2).
     public var hidden: Set<DeviceID>

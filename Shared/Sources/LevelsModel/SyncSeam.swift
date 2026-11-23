@@ -6,6 +6,9 @@ import Foundation
 /// Sync state, published by `BatterySyncService` and cached for widgets (SYNC-001 R21, ADR-0017 §6).
 public enum SyncStatus: Sendable, Equatable, Codable {
     case idle, syncing, signedOut, restricted, waitingForAccount, iCloudFull
+    /// No iCloud at all by design: the free-team build (owner decision K) syncs nothing and
+    /// writes only this device's own readings to the cache. Not an error; the UI shows no banner.
+    case localOnly
     case misconfigured(code: Int)
     case offline(lastFetchAt: Date?)
 }
@@ -43,4 +46,23 @@ public protocol BatterySyncing: Sendable {
     func report(_ readings: [DeviceBattery], reason: ReportReason) async -> ReportOutcome
     /// The current sync state.
     var status: SyncStatus { get async }
+    /// Fetches changes (SYNC-001 R8–R10, MAC-001 R10/R10a/R11). Returns whether the cache is
+    /// usable afterwards. The local-only stand-in has nothing to fetch.
+    @discardableResult
+    func refresh(_ reason: RefreshReason) async -> Bool
+}
+
+/// This device's stable ID (ADR-0007, SYNC-001 Design). `KeychainDeviceIdentity` in
+/// LevelsReaders is the real one; ``FixedDeviceIdentity`` is the test double.
+public protocol DeviceIdentityProviding: Sendable {
+    /// The stored ID, created on first use. Returns `nil` when the Keychain is not readable
+    /// yet (before first unlock): the caller skips reporting and tries later (ADR-0007 rule 1).
+    func currentDeviceID() throws -> DeviceID?
+}
+
+/// A ``DeviceIdentityProviding`` that returns a fixed value (tests, previews).
+public struct FixedDeviceIdentity: DeviceIdentityProviding {
+    public let id: DeviceID?
+    public init(_ id: DeviceID?) { self.id = id }
+    public func currentDeviceID() throws -> DeviceID? { id }
 }

@@ -53,6 +53,15 @@ struct StoreTests {
         #expect(store.state == .loaded)
     }
 
+    @Test func localOnlyStatusShowsNoBanner() async {
+        for devices in [[me], [me, phone]] {
+            let (store, _) = makeStore(FakeSource(snapshot(devices, status: .localOnly)))
+            await store.reload()
+            #expect(store.state == (devices.count == 1 ? .onlyThisDevice : .loaded))
+            #expect(!SyncStatusBanner.isVisible(state: store.state, isReportingOff: store.isReportingOff))
+        }
+    }
+
     @Test func firstReadThrowsGivesSyncErrorAndEmptyList() async {
         let (store, _) = makeStore(FakeSource(snapshot([me]), readError: true))
         await store.reload()

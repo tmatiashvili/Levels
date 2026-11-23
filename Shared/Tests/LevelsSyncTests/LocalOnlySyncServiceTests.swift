@@ -97,12 +97,11 @@ struct LocalOnlySyncServiceTests {
 
     func advance(_ seconds: Int) { clock.advance(by: .seconds(seconds)) }
 
-    @Test func LOCAL_statusIsIdleAndLocalOnly() async {
+    @Test func LOCAL_statusIsLocalOnly() async {
         let s = service()
-        #expect(await s.status == .idle)
-        #expect(s.isLocalOnly)
+        #expect(await s.status == .localOnly)
         await s.start()
-        #expect(cache.read()?.syncStatus == .idle)
+        #expect(cache.read()?.syncStatus == .localOnly)
     }
 
     @Test func LOCAL_R5_firstReportWritesCacheAndReloadsWidgets() async {
@@ -262,6 +261,7 @@ struct LocalOnlySyncServiceTests {
     @Test func LOCAL_usableThroughTheBatterySyncingSeam() async {
         let sync: any BatterySyncing = service()
         #expect(await sync.report([mac(at: clock.date)], reason: .launch) == .uploaded)
-        #expect(await sync.status == .idle)
+        #expect(await sync.status == .localOnly)
+        #expect(await sync.refresh(.wake))  // through the protocol, not the concrete type
     }
 }

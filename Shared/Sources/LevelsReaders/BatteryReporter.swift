@@ -80,6 +80,24 @@ public actor BatteryReporter {
         }
     }
 
+    /// MAC-002 Design shape: the ID comes from `identity` (ADR-0007) and the name from
+    /// `preferences.thisDeviceName`, else the default name (SYNC-002 R17), on every report.
+    public init<C: Clock<Duration>>(
+        reader: any BatteryReader,
+        sync: any BatterySyncing,
+        kind: DeviceKind,
+        identity: any DeviceIdentityProviding,
+        preferences: any DisplayPreferencesStore,
+        log: ReportLog = .inMemory(),
+        now: @escaping @Sendable () -> Date = Date.init,
+        clock: C = ContinuousClock()
+    ) {
+        self.init(reader: reader, sync: sync, kind: kind,
+                  deviceID: { (try? identity.currentDeviceID()) ?? nil },
+                  deviceName: { DefaultDeviceName.resolved(kind: kind, thisDeviceName: preferences.load().thisDeviceName) },
+                  log: log, now: now, clock: clock)
+    }
+
     // MARK: Lifecycle (MAC-002 R6)
 
     /// Reports `.launch` (R6a), then consumes the reader's changes (R6b, R6c) and runs
