@@ -163,11 +163,11 @@ Entitlements and Info.plist (placeholders `<bundle-prefix>` = ADR-0003's `<rdns>
 | `com.apple.developer.icloud-services` = `[CloudKit]` | ✓ | ✓ | ✓ | – (R14: widgets don't fetch) |
 | `com.apple.developer.icloud-container-identifiers` = `[iCloud.<bundle-prefix>.levels]` | ✓ | ✓ | ✓ | – |
 | `com.apple.developer.icloud-container-environment` = `Production` in every configuration, Debug included (ADR-0005 rule 5; owner decision 2026-11-23) | ✓ | ✓ | ✓ | – |
-| `aps-environment` (iOS/watchOS) / `com.apple.developer.aps-environment` (macOS): Debug = `development`; Release, TestFlight and Developer ID = `production` (owner decision 2026-11-23; a development profile only allows `development`) | ✓ | ✓ | ✓ | – |
+| `aps-environment` (iOS/watchOS) / `com.apple.developer.aps-environment` (macOS): the entitlements file (one per app, used by Debug and Release) says `development`; the exported Release, TestFlight and Developer ID build carries `production`, set by export (owner decision I; lead's call 14: a development profile only allows `development`, and archives are signed with it) | ✓ | ✓ | ✓ | – |
 | `UIBackgroundModes` = `[remote-notification]` | ✓ | ✓ (**Assumption:** a single-target watch app declares it in `UIBackgroundModes` / WKBackgroundModes as Xcode's Background Modes capability writes it) | – (not needed on macOS) | – |
 | `com.apple.security.application-groups` (ADR-0003, ADR-0009; lead's call 2026-11-23) | `group.<bundle-prefix>.levels` | same | `<TeamID>.<bundle-prefix>.levels` | same as host (iOS/watch widgets `group.…`, Mac widget `<TeamID>.…`) |
 | `keychain-access-groups` (ADR-0007) | `$(AppIdentifierPrefix)<bundle-prefix>.levels.shared` | same | same | same |
-| `com.apple.security.app-sandbox` + `com.apple.security.network.client` | – | – | depends on ADR-0013 | macOS widget: required (extensions are sandboxed) |
+| `com.apple.security.app-sandbox` + `com.apple.security.network.client` | – | – | depends on ADR-0013 | macOS widget: sandbox required (extensions are sandboxed); network.client none (it never fetches, R14) |
 
 Widget extensions get no iCloud rows (R14). Experiments that must not touch the owner's data use a separate container or test setup, not the daily container (ADR-0018 §6).
 

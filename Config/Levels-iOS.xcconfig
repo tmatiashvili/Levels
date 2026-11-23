@@ -16,9 +16,10 @@ INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPo
 // UI-005 R5: all iPad orientations, no UIRequiresFullScreen.
 INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
 
-// SYNC-001 / owner decision I: push environment differs by configuration.
-CODE_SIGN_ENTITLEMENTS[config=Debug] = Levels-iOS/Levels-iOS.Debug.entitlements
-CODE_SIGN_ENTITLEMENTS[config=Release] = Levels-iOS/Levels-iOS.Release.entitlements
+// One file for Debug and Release (lead's call 14): aps-environment is
+// `development`; exporting for TestFlight, App Store or Developer ID rewrites
+// it to `production`.
+CODE_SIGN_ENTITLEMENTS = Levels-iOS/Levels-iOS.entitlements
 
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon

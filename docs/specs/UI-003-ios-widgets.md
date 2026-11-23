@@ -73,7 +73,7 @@ accessoryCircular   accessoryRectangular            accessoryInline
   - `SelectDeviceIntent: WidgetConfigurationIntent`.
   - Family views: `SmallDeviceView`, `MediumDevicesView`, `LargeDevicesView`, `CircularDeviceView`, `RectangularDevicesView`, `InlineDeviceView`, each taking an entry; all with previews for every state.
 - `Widgets-iOS` target: `@main struct LevelsWidgets: WidgetBundle` with `LevelsDevicesWidget` (kind `"LevelsDevices"`), `.supportedFamilies([...R3])`, `.configurationDisplayName("Battery Levels")`, `.description("See the battery of all your devices.")`.
-- Entitlement: App Group only (no iCloud). Lead's call (2026-11-23): widgets read the App Group cache only and never fetch from iCloud (ADR-0006, SYNC-001 R14). Links `LevelsModel`, `LevelsUI`, `LevelsWidgetKit`; never `LevelsSync`/`LevelsReaders` (ADR-0003).
+- Entitlements: App Group and the keychain access group (ADR-0007, SYNC-001 entitlements); no iCloud, no push. Lead's call (2026-11-23): widgets read the App Group cache only and never fetch from iCloud (ADR-0006, SYNC-001 R14). Links `LevelsModel`, `LevelsUI`, `LevelsWidgetKit`; never `LevelsSync`/`LevelsReaders` (ADR-0003).
 - Placeholder/snapshot: `placeholder(in:)` returns a redacted sample of three devices; the gallery snapshot uses sample data, not the cache.
 - **Builder's call:** truncating names in medium widgets (first word vs character limit).
 

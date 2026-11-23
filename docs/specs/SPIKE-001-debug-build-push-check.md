@@ -25,8 +25,8 @@ Owner decision (2026-11-23) on push environments:
 
 | Build | `aps-environment` / `com.apple.developer.aps-environment` | `com.apple.developer.icloud-container-environment` |
 |---|---|---|
-| Debug (Xcode, development profile) | `development` | `Production` |
-| Release, TestFlight, Developer ID | `production` | `Production` |
+| Debug (Xcode, development profile) | `development` (entitlements file) | `Production` |
+| Exported Release, TestFlight, Developer ID | `production` (set by export; the entitlements file says `development`, lead's call 14) | `Production` |
 
 - **R1** — The iPhone runs a Debug build installed from Xcode with the entitlements above, the real container ID (`iCloud.<rdns>.levels`), `UIBackgroundModes = [remote-notification]`, and `registerForRemoteNotifications()` at launch. It saves `CKDatabaseSubscription("levels-private-db")` with `shouldSendContentAvailable = true` (as SYNC-001 R3) and logs every `didReceiveRemoteNotification` with a timestamp and the subscription ID.
 - **R2** — The Mac runs any build (Debug is fine) that writes a `DeviceBattery` record into the `Levels` zone of the Production container on a button press. The schema must already be deployed (ADR-0018 §6).

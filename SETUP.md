@@ -6,14 +6,14 @@ Source of truth: [ADR-0003](docs/adr/0003-project-structure.md). Entitlement rul
 
 ## What you will end up with
 
-| Target | Platform | Bundle ID | Shared products linked | Entitlements file (Debug / Release) | Embedded in |
+| Target | Platform | Bundle ID | Shared products linked | Entitlements file (Debug and Release) | Embedded in |
 |---|---|---|---|---|---|
-| Levels-iOS | iOS (iPhone + iPad) | `<rdns>.levels` | LevelsModel, LevelsSync, LevelsReaders, LevelsUI, LevelsWidgetKit | `Levels-iOS/Levels-iOS.Debug.entitlements` / `Levels-iOS/Levels-iOS.Release.entitlements` | – |
-| Levels-Mac | macOS | `<rdns>.levels` | all five + `CloudKit.framework` | `Levels-Mac/Levels-Mac.Debug.entitlements` / `Levels-Mac/Levels-Mac.Release.entitlements` | – |
-| Levels-Watch | watchOS | `<rdns>.levels.watchkitapp` | all five | `Levels-Watch/Levels-Watch.Debug.entitlements` / `Levels-Watch/Levels-Watch.Release.entitlements` | Levels-iOS |
-| Widgets-iOS | iOS | `<rdns>.levels.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-iOS/Widgets-iOS.entitlements` (both) | Levels-iOS |
-| Widgets-Mac | macOS | `<rdns>.levels.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-Mac/Widgets-Mac.entitlements` (both) | Levels-Mac |
-| Widgets-Watch | watchOS | `<rdns>.levels.watchkitapp.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-Watch/Widgets-Watch.entitlements` (both) | Levels-Watch |
+| Levels-iOS | iOS (iPhone + iPad) | `<rdns>.levels` | LevelsModel, LevelsSync, LevelsReaders, LevelsUI, LevelsWidgetKit | `Levels-iOS/Levels-iOS.entitlements` | – |
+| Levels-Mac | macOS | `<rdns>.levels` | all five + `CloudKit.framework` | `Levels-Mac/Levels-Mac.entitlements` | – |
+| Levels-Watch | watchOS | `<rdns>.levels.watchkitapp` | all five | `Levels-Watch/Levels-Watch.entitlements` | Levels-iOS |
+| Widgets-iOS | iOS | `<rdns>.levels.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-iOS/Widgets-iOS.entitlements` | Levels-iOS |
+| Widgets-Mac | macOS | `<rdns>.levels.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-Mac/Widgets-Mac.entitlements` | Levels-Mac |
+| Widgets-Watch | watchOS | `<rdns>.levels.watchkitapp.widgets` | LevelsModel, LevelsUI, LevelsWidgetKit | `Widgets-Watch/Widgets-Watch.entitlements` | Levels-Watch |
 
 Never link LevelsSync or LevelsReaders into a widget target (ADR-0003 §3, SYNC-001 AC17).
 
@@ -68,14 +68,14 @@ For each, use File → New → Target, pick the template, then press Finish. If 
 Settings typed into a target win over its xcconfig file, and the templates type a lot of them.
 
 20. Select a target → Build Settings → choose "All" and "Levels" (not "Combined") at the top. Settings set on the target show in bold in the target's column.
-21. For each target, find these settings and, if bold in the target column, select the row and press Delete (it falls back to the xcconfig value): `PRODUCT_BUNDLE_IDENTIFIER`, `PRODUCT_NAME`, `INFOPLIST_FILE`, `GENERATE_INFOPLIST_FILE`, every `INFOPLIST_KEY_…`, `CODE_SIGN_ENTITLEMENTS`, `CODE_SIGN_STYLE`, `DEVELOPMENT_TEAM`, `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `IPHONEOS_DEPLOYMENT_TARGET`, `MACOSX_DEPLOYMENT_TARGET`, `WATCHOS_DEPLOYMENT_TARGET`, `SWIFT_VERSION`, `SWIFT_STRICT_CONCURRENCY`, `SDKROOT`, `SUPPORTED_PLATFORMS`, `TARGETED_DEVICE_FAMILY`, `LD_RUNPATH_SEARCH_PATHS`, `SKIP_INSTALL`, `ENABLE_HARDENED_RUNTIME`, `ENABLE_APP_SANDBOX`, `ENABLE_OUTGOING_NETWORK_CONNECTIONS`, `ENABLE_USER_SELECTED_FILES`. The search box at the top right of Build Settings finds each one.
-22. `ENABLE_USER_SELECTED_FILES` on the two Mac targets matters most: if it stays at "Read Only", Xcode adds a file-access entitlement that MAC-001 doesn't allow.
+21. For each target, find these settings and, if bold in the target column, select the row and press Delete (it falls back to the xcconfig value): `PRODUCT_BUNDLE_IDENTIFIER`, `PRODUCT_NAME`, `INFOPLIST_FILE`, `GENERATE_INFOPLIST_FILE`, every `INFOPLIST_KEY_…`, `CODE_SIGN_ENTITLEMENTS`, `CODE_SIGN_STYLE`, `DEVELOPMENT_TEAM`, `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, `IPHONEOS_DEPLOYMENT_TARGET`, `MACOSX_DEPLOYMENT_TARGET`, `WATCHOS_DEPLOYMENT_TARGET`, `SWIFT_VERSION`, `SWIFT_STRICT_CONCURRENCY`, `SWIFT_DEFAULT_ACTOR_ISOLATION`, `SWIFT_APPROACHABLE_CONCURRENCY`, `SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY`, `SDKROOT`, `SUPPORTED_PLATFORMS`, `TARGETED_DEVICE_FAMILY`, `LD_RUNPATH_SEARCH_PATHS`, `SKIP_INSTALL`, `ENABLE_HARDENED_RUNTIME`, `ENABLE_APP_SANDBOX`, `ENABLE_OUTGOING_NETWORK_CONNECTIONS`, `ENABLE_USER_SELECTED_FILES`. The search box at the top right of Build Settings finds each one.
+22. Two of these matter most. `ENABLE_USER_SELECTED_FILES` on the two Mac targets: if it stays at "Read Only", Xcode adds a file-access entitlement that MAC-001 doesn't allow. `SWIFT_DEFAULT_ACTOR_ISOLATION`: Xcode 26 templates set it to MainActor, but Levels uses `nonisolated`, like the Shared package (lead's call 15); UI types mark themselves `@MainActor`.
 
 ### F. Add the target folders as synchronized folders
 
 23. From Finder, drag `Levels-iOS` into the sidebar. In the dialog choose "Create folders" (this makes a synchronized folder, shown with a blue folder icon), and tick only the target `Levels-iOS`.
 24. Do the same for each folder, ticking only its own target: `Levels-Mac` → Levels-Mac, `Levels-Watch` → Levels-Watch, `Widgets-iOS` → Widgets-iOS, `Widgets-Mac` → Widgets-Mac, `Widgets-Watch` → Widgets-Watch.
-25. Files you add to these folders later join the target by themselves. The Info.plist and entitlements files must not be copied into the app as resources: for each folder, select it in the sidebar, open the right-hand inspector, and under Target Membership → Exceptions (or "Build Phase membership exceptions") make sure `Info.plist` and the `.entitlements` files are excluded. If a build later fails with "Multiple commands produce …/Info.plist", this is the fix.
+25. Files you add to these folders later join the target by themselves. The one exception is `Info.plist`, which must not be copied into the app as a resource. For each of the six folders: open the blue folder in the sidebar, select `Info.plist` inside it, open the File inspector (right-hand panel, first tab), and untick its target under Target Membership. Xcode records this as an exception for that folder. Entitlements files are never copied, so they need nothing. If a build fails with "Multiple commands produce …/Info.plist", this step was missed.
 
 ### G. Add the Shared package and link products
 
@@ -87,6 +87,7 @@ Settings typed into a target win over its xcconfig file, and the templates type 
 ### H. Signing
 
 30. For each target → Signing & Capabilities: "Automatically manage signing" on, Team shows yours (it comes from the xcconfig). Xcode reads the checked-in entitlements files and lists the capabilities: iCloud (CloudKit), Push Notifications, App Groups, Keychain Sharing, Background Modes, and for Mac App Sandbox and Hardened Runtime.
+    - **Levels-Watch check:** open its Background Modes section and look at the "Remote notifications" checkbox. Tick it if it isn't ticked, then run `git diff Levels-Watch/Info.plist`. Xcode writes the key it expects: `UIBackgroundModes` (what the repo has) or `WKBackgroundModes`. Keep whatever Xcode wrote and remove the other key, so the file holds exactly one of them with `remote-notification` (RPT-004's open assumption).
 31. Don't add capabilities with "+ Capability" if they're already listed; that can create a second entitlements file. If the iCloud section shows the container `iCloud.<rdns>.levels` unticked or red, tick it (Xcode registers it with Apple). Do the same for the App Group `group.<rdns>.levels` on the iOS and watch targets. The Mac group `<TEAMID>.<rdns>.levels` needs no registration.
 32. If Xcode rewrites an entitlements file, compare with `git diff`. The only allowed differences are ones you meant to make; restore the rest with `git checkout -- <file>`.
 
@@ -100,6 +101,7 @@ Settings typed into a target win over its xcconfig file, and the templates type 
 
 ## Notes
 
-- **Debug vs Release push:** Debug entitlements use `aps-environment = development`, Release `production` (owner decision I). The CloudKit environment is `Production` in both (decision C). Whether a Debug build still gets pushes is what SPIKE-001 checks first.
-- **Mac sandbox:** on for v0.1–v0.2 (ADR-0013). At v0.3 MAC-003 turns it off for the Developer ID build: set `com.apple.security.app-sandbox` to false in `Levels-Mac/Levels-Mac.Release.entitlements` and `ENABLE_APP_SANDBOX = NO` in `Config/Levels-Mac.xcconfig`, together.
-- **Release check for the Mac:** after exporting, `codesign -d --entitlements - Levels.app` must match `Levels-Mac/Levels-Mac.Release.entitlements` with the variables filled in, and `otool -L Levels.app/Contents/MacOS/Levels` must list CloudKit (MAC-001 AC11).
+- **Push environment:** each app has one entitlements file, used by Debug and Release, with `aps-environment = development` (`com.apple.developer.aps-environment` on Mac). Archiving with automatic signing uses the development profile, which allows only `development`. Exporting the archive for TestFlight, the App Store or Developer ID rewrites it to `production` (lead's call 14; owner decision I's outcome is unchanged). The CloudKit environment is `Production` in every build (decision C). Whether a Debug build still gets pushes is what SPIKE-001 checks first.
+- **Check after every export:** run `codesign -d --entitlements - <exported .app>` (for an iOS or watch build, on the `.app` inside the exported `.ipa`'s `Payload/` folder). It must show `aps-environment` (Mac: `com.apple.developer.aps-environment`) = `production` and `com.apple.developer.icloud-container-environment` = `Production`.
+- **Mac sandbox:** on for v0.1–v0.2 (ADR-0013). At v0.3 MAC-003 turns it off for the Developer ID build: add `ENABLE_APP_SANDBOX[config=Release] = NO` to `Config/Levels-Mac.xcconfig`, so only the Release (Developer ID) build loses the sandbox (ADR-0013). Because `Levels-Mac/Levels-Mac.entitlements` sets `com.apple.security.app-sandbox = true` for both configurations, MAC-003 must also make the entitlements match: either a Release-only entitlements file without the sandbox key, or move the sandbox key out of the file and leave it to `ENABLE_APP_SANDBOX`. MAC-001 AC11 compares the exported entitlements with the table.
+- **Release check for the Mac:** after exporting, `codesign -d --entitlements - Levels.app` must match `Levels-Mac/Levels-Mac.entitlements` with the variables filled in and `com.apple.developer.aps-environment` = `production`, and `otool -L Levels.app/Contents/MacOS/Levels` must list CloudKit (MAC-001 AC11).

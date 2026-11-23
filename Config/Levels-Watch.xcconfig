@@ -11,8 +11,10 @@ PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels.watchkitapp
 INFOPLIST_FILE = Levels-Watch/Info.plist
 INFOPLIST_KEY_CFBundleDisplayName = Levels
 
-CODE_SIGN_ENTITLEMENTS[config=Debug] = Levels-Watch/Levels-Watch.Debug.entitlements
-CODE_SIGN_ENTITLEMENTS[config=Release] = Levels-Watch/Levels-Watch.Release.entitlements
+// One file for Debug and Release (lead's call 14): aps-environment is
+// `development`; exporting for TestFlight, App Store or Developer ID rewrites
+// it to `production`.
+CODE_SIGN_ENTITLEMENTS = Levels-Watch/Levels-Watch.entitlements
 
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
