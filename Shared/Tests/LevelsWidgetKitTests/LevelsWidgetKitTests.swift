@@ -16,14 +16,11 @@ struct LevelsWidgetKitTests {
         DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: own, devices: devices), preferences: DisplayPreferences())
     }
 
-    @Test func AC7_smallDefaultIsLowestOtherDevice() {
+    @Test func decisionL_smallDefaultLowestMayPickThisMac() {
         let e = entry([d(1, .mac, "Mac", 10), d(2, .iphone, "iPhone", 40), d(3, .watch, "Watch", 30)])
-        #expect(e.lowest(excludingThisDevice: true)?.name == "Watch")
-        #expect(e.lowest(excludingThisDevice: false)?.name == "Mac")
-    }
-
-    @Test func smallFallsBackToThisMacWhenAlone() {
-        #expect(entry([d(1, .mac, "Mac", 66)]).lowest(excludingThisDevice: true)?.name == "Mac")
+        #expect(e.lowest?.name == "Mac")
+        #expect(entry([d(1, .mac, "Mac", 50), d(2, .iphone, "iPhone", 40)]).lowest?.name == "iPhone")
+        #expect(entry([d(1, .mac, "Mac", 66)]).lowest?.name == "Mac")
     }
 
     @Test func noCacheGivesEmptyEntry() {
@@ -63,41 +60,40 @@ struct LevelsWidgetKitTests {
     @Test func AC3_tenDevicesShowEightRowsAndTwoMoreInListOrder() {
         let devices = (1...10).map { d($0, $0 == 1 ? .mac : .iphone, "D\($0)", 100 - $0 * 5) }
         let e = entry(devices)
-        let list = e.largeList(excludingThisDevice: false)
+        let list = e.largeList
         #expect(list.shown.count == 8)
         #expect(list.moreCount == 2)
         #expect(list.shown.map(\.id) == Array(e.rows.prefix(8)).map(\.id))
         #expect(list.shown.first?.isThisDevice == true)  // UI-001 order: this device first
     }
 
-    @Test func macLargeAndMediumLeaveThisMacOut() {
+    @Test func decisionL_macLargeAndMediumIncludeThisMacFirst() {
         let devices = (1...10).map { d($0, $0 == 1 ? .mac : .iphone, "D\($0)", 100 - $0 * 5) }
         let e = entry(devices)
-        let large = e.largeList(excludingThisDevice: true)
-        #expect(large.shown.count == 8 && large.moreCount == 1)
-        #expect(!large.shown.contains { $0.isThisDevice })
-        #expect(large.shown.map(\.id) == Array(e.rows.filter { !$0.isThisDevice }.prefix(8)).map(\.id))
-        let medium = e.mediumRows(excludingThisDevice: true)
-        #expect(medium.count == 4 && !medium.contains { $0.isThisDevice })
-        #expect(e.mediumRows(excludingThisDevice: false).first?.isThisDevice == true)
+        let large = e.largeList
+        #expect(large.shown.count == 8 && large.moreCount == 2)
+        #expect(large.shown.first?.isThisDevice == true)
+        let medium = e.mediumRows
+        #expect(medium.count == 4 && medium.first?.isThisDevice == true)
+        #expect(medium.map(\.id) == Array(e.rows.prefix(4)).map(\.id))
     }
 
     @Test func mediumKeepsFullNames() {
         let e = entry([d(1, .mac, "Mac", 66), d(2, .watch, "Apple Watch", 40), d(3, .ipad, "Nino's iPad Pro", 30)])
-        #expect(e.mediumRows(excludingThisDevice: true).map(\.name) == ["Nino's iPad Pro", "Apple Watch"])
+        #expect(e.mediumRows.map(\.name) == ["Mac", "Nino's iPad Pro", "Apple Watch"])
     }
 
-    @Test func macListKeepsThisMacWhenAlone() {
+    @Test func macListShowsThisMacWhenAlone() {
         let e = entry([d(1, .mac, "Mac", 66)])
-        #expect(e.largeList(excludingThisDevice: true).shown.map(\.name) == ["Mac"])
-        #expect(e.mediumRows(excludingThisDevice: true).map(\.name) == ["Mac"])
+        #expect(e.largeList.shown.map(\.name) == ["Mac"])
+        #expect(e.mediumRows.map(\.name) == ["Mac"])
     }
 
     @Test func largeShowsAllWhenEightOrFewer() {
         let e = entry((1...8).map { d($0, .iphone, "D\($0)", 50) })
-        #expect(e.largeList(excludingThisDevice: false).shown.count == 8 && e.largeList(excludingThisDevice: false).moreCount == 0)
+        #expect(e.largeList.shown.count == 8 && e.largeList.moreCount == 0)
         let one = entry([d(1, .mac, "Mac", 66)])
-        #expect(one.largeList(excludingThisDevice: false).shown.count == 1 && one.largeList(excludingThisDevice: false).moreCount == 0)
+        #expect(one.largeList.shown.count == 1 && one.largeList.moreCount == 0)
         #expect(one.isOnlyThisDevice)
     }
 
@@ -105,7 +101,7 @@ struct LevelsWidgetKitTests {
         let e = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: [
             d(1, .mac, "Mac", nil), d(2, .iphone, "iPhone", 40, age: 5 * 3600), d(3, .watch, "Watch", 30)]),
             preferences: DisplayPreferences(hidden: [id(3)]))
-        let shown = e.largeList(excludingThisDevice: false).shown
+        let shown = e.largeList.shown
         #expect(shown.map(\.name) == ["Mac", "iPhone"])
         #expect(shown[1].freshness(at: now) == .stale)
         #expect(!e.isOnlyThisDevice)
@@ -113,8 +109,7 @@ struct LevelsWidgetKitTests {
 
     @Test func largeListEmptyWithoutCache() {
         let e = DeviceEntry(date: now, snapshot: nil, preferences: DisplayPreferences())
-        #expect(e.largeList(excludingThisDevice: true) == LargeList(rows: []))
-        #expect(e.largeList(excludingThisDevice: false).moreCount == 0)
+        #expect(e.largeList == LargeList(rows: []))
     }
 
     @Test func macOffersLargeFamily() {
@@ -127,23 +122,23 @@ struct LevelsWidgetKitTests {
         let e = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: [
             d(1, .mac, "Mac", 10), d(2, .iphone, "iPhone", 40), d(3, .watch, "Watch", 90)]),
             preferences: DisplayPreferences(), selection: id(3))
-        #expect(e.singleDevice(excludingThisDevice: true)?.name == "Watch")
+        #expect(e.singleDevice?.name == "Watch")
     }
 
     @Test func configuredThisMacIsShown() {
         let e = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: [
             d(1, .mac, "Mac", 90), d(2, .iphone, "iPhone", 40)]), preferences: DisplayPreferences(), selection: id(1))
-        #expect(e.singleDevice(excludingThisDevice: true)?.name == "Mac")
+        #expect(e.singleDevice?.name == "Mac")
     }
 
     @Test func hiddenOrDeletedSelectionFallsBackToLowest() {
         let devices = [d(1, .mac, "Mac", 10), d(2, .iphone, "iPhone", 40), d(3, .watch, "Watch", 30)]
         let hidden = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: devices),
                                  preferences: DisplayPreferences(hidden: [id(2)]), selection: id(2))
-        #expect(hidden.singleDevice(excludingThisDevice: true)?.name == "Watch")
+        #expect(hidden.singleDevice?.name == "Mac")  // lowest, this Mac included (decision L)
         let gone = DeviceEntry(date: now, snapshot: SnapshotFile(ownDeviceID: id(1), devices: devices),
                                preferences: DisplayPreferences(), selection: id(9))
-        #expect(gone.singleDevice(excludingThisDevice: true)?.name == "Watch")
+        #expect(gone.singleDevice?.name == "Mac")
     }
 
     @Test func AC9_choicesAreLowestThenShownRowsIncludingThisMac() {

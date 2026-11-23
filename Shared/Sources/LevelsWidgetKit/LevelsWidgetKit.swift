@@ -25,38 +25,22 @@ public struct DeviceEntry: TimelineEntry, Sendable {
         } ?? []
     }
 
-    /// UI-003 R2 "Lowest battery". `excludingThisDevice` is the Mac default (UI-004 R12); when
-    /// no other device has a level, this device is shown instead (local-only build).
-    public func lowest(excludingThisDevice: Bool) -> DeviceRowModel? {
-        let pool = excludingThisDevice ? rows.filter { !$0.isThisDevice } : rows
-        return MenuBarLabelModel.lowest(pool, now: date)
-            ?? (excludingThisDevice ? MenuBarLabelModel.lowest(rows, now: date) : nil)
-    }
+    /// UI-003 R2 "Lowest battery", over every shown row. This device is a candidate too
+    /// (owner decision L: Mac widgets include this Mac, UI-004 R12).
+    public var lowest: DeviceRowModel? { MenuBarLabelModel.lowest(rows, now: date) }
 
     /// What a single-device family shows: the configured device while it is still shown,
     /// else "Lowest battery" (UI-003 R1, edge case "selected device later hidden or deleted").
-    public func singleDevice(excludingThisDevice: Bool) -> DeviceRowModel? {
+    public var singleDevice: DeviceRowModel? {
         if let selection, let row = rows.first(where: { $0.id == selection }) { return row }
-        return lowest(excludingThisDevice: excludingThisDevice) ?? rows.first
+        return lowest ?? rows.first
     }
 
-    /// Rows for the list families. On the Mac this Mac is left out (macOS shows its battery
-    /// already, UI-004 R1/R12) unless it is the only device.
-    public func listRows(excludingThisDevice: Bool) -> [DeviceRowModel] {
-        guard excludingThisDevice else { return rows }
-        let others = rows.filter { !$0.isThisDevice }
-        return others.isEmpty ? rows : others
-    }
+    /// `systemLarge` content (UI-003 R3, R4, R8), in UI-001 order: this device first.
+    public var largeList: LargeList { LargeList(rows: rows) }
 
-    /// `systemLarge` content (UI-003 R3, R4, R8).
-    public func largeList(excludingThisDevice: Bool) -> LargeList {
-        LargeList(rows: listRows(excludingThisDevice: excludingThisDevice))
-    }
-
-    /// `systemMedium` content: up to 4 rows (UI-003 R3).
-    public func mediumRows(excludingThisDevice: Bool) -> [DeviceRowModel] {
-        Array(listRows(excludingThisDevice: excludingThisDevice).prefix(4))
-    }
+    /// `systemMedium` content: up to 4 rows in UI-001 order (UI-003 R3).
+    public var mediumRows: [DeviceRowModel] { Array(rows.prefix(4)) }
 
     /// True when the only shown device is this one (UI-003 R8 "Other devices appear…").
     public var isOnlyThisDevice: Bool { rows.count == 1 && rows[0].isThisDevice }
@@ -149,24 +133,22 @@ public struct DevicesProvider: AppIntentTimelineProvider {
 }
 
 /// The device widget (kind `"LevelsDevices"`). Families and the "Lowest battery" rule follow
-/// the platform: on the Mac `systemSmall`, `systemMedium` and `systemLarge` (UI-004 R11) and
-/// the small default excludes this Mac (UI-004 R12).
+/// the platform: on the Mac `systemSmall`, `systemMedium` and `systemLarge` (UI-004 R11).
+/// Every family includes this device (UI-004 R12, owner decision L).
 public struct LevelsDevicesWidget: Widget {
     public static let kind = "LevelsDevices"
 
     #if os(macOS)
     public static let families: [WidgetFamily] = [.systemSmall, .systemMedium, .systemLarge]
-    static let excludesThisDeviceFromLowest = true
     #else
     public static let families: [WidgetFamily] = [.systemSmall, .systemMedium]
-    static let excludesThisDeviceFromLowest = false
     #endif
 
     public init() {}
 
     public var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: Self.kind, intent: SelectDeviceIntent.self, provider: DevicesProvider()) { entry in
-            DevicesWidgetView(entry: entry, excludesThisDeviceFromLowest: Self.excludesThisDeviceFromLowest)
+            DevicesWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)  // UI-003 R10
         }
         .configurationDisplayName(Text("Battery Levels"))
@@ -178,12 +160,10 @@ public struct LevelsDevicesWidget: Widget {
 /// Picks the family view.
 public struct DevicesWidgetView: View {
     let entry: DeviceEntry
-    let excludesThisDeviceFromLowest: Bool
     @Environment(\.widgetFamily) private var family
 
-    public init(entry: DeviceEntry, excludesThisDeviceFromLowest: Bool) {
+    public init(entry: DeviceEntry) {
         self.entry = entry
-        self.excludesThisDeviceFromLowest = excludesThisDeviceFromLowest
     }
 
     public var body: some View {
@@ -192,13 +172,13 @@ public struct DevicesWidgetView: View {
         } else {
             switch family {
             case .systemMedium:
-                MediumDevicesView(entry: entry, excludesThisDevice: excludesThisDeviceFromLowest)
+                MediumDevicesView(entry: entry)
             #if !os(watchOS)
             case .systemLarge:
-                LargeDevicesView(entry: entry, excludesThisDevice: excludesThisDeviceFromLowest)
+                LargeDevicesView(entry: entry)
             #endif
             default:
-                SmallDeviceView(entry: entry, excludesThisDevice: excludesThisDeviceFromLowest)
+                SmallDeviceView(entry: entry)
             }
         }
     }
@@ -224,10 +204,9 @@ struct EmptyWidgetView: View {
 /// `systemSmall`: one device, symbol + name, large ring with %, age (UI-003 R3).
 struct SmallDeviceView: View {
     let entry: DeviceEntry
-    let excludesThisDevice: Bool
 
     var body: some View {
-        if let row = entry.singleDevice(excludingThisDevice: excludesThisDevice) {
+        if let row = entry.singleDevice {
             let stale = row.freshness(at: entry.date) == .stale
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
@@ -254,11 +233,9 @@ struct SmallDeviceView: View {
 /// shown reading (UI-003 R3). Each item is a `Link` to its device (UI-003 R7).
 struct MediumDevicesView: View {
     let entry: DeviceEntry
-    /// The Mac leaves itself out (UI-004 R12), so it doesn't use one of the 4 slots.
-    let excludesThisDevice: Bool
 
     var body: some View {
-        let shown = entry.mediumRows(excludingThisDevice: excludesThisDevice)
+        let shown = entry.mediumRows
         let oldest = shown.map { $0.readingDate(now: entry.date) }.min() ?? entry.date
         VStack(spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
@@ -286,16 +263,13 @@ struct MediumDevicesView: View {
 /// when cut (UI-003 R3, R4). Each row is a `Link` to its device (UI-003 R7, UI-004 R14).
 public struct LargeDevicesView: View {
     let entry: DeviceEntry
-    /// The Mac leaves itself out (UI-004 R12) unless it is the only device.
-    let excludesThisDevice: Bool
 
-    public init(entry: DeviceEntry, excludesThisDevice: Bool) {
+    public init(entry: DeviceEntry) {
         self.entry = entry
-        self.excludesThisDevice = excludesThisDevice
     }
 
     public var body: some View {
-        let list = entry.largeList(excludingThisDevice: excludesThisDevice)
+        let list = entry.largeList
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
                 Text("Battery Levels").font(.caption.weight(.semibold))

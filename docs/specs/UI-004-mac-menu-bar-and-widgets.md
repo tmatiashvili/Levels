@@ -40,7 +40,7 @@ Popover (`.menuBarExtraStyle(.window)`):
 Desktop widgets:
 
 - **R11** `Widgets-Mac` offers the same widget kind as UI-003 with families `systemSmall`, `systemMedium`, `systemLarge`, reusing `LevelsWidgetKit` views and provider unchanged. No accessory families (macOS has none for third-party desktop widgets). **Assumption:** `systemExtraLarge` adds nothing useful; skipped.
-- **R12** On the Mac the default "Lowest battery" for small excludes this Mac (as R1). The configuration picker still offers this Mac.
+- **R12** Owner decision L (2026-11-24): Mac desktop widgets include this Mac alongside its accessories and other devices. Medium and large list this Mac in normal UI-001 order (this Mac first, as in the popover). Small keeps the picker (this Mac offered); its default "Lowest battery" may pick this Mac. The menu-bar label keeps R1.
 - **R13** Desktop widgets follow ADR-0017 refresh and staleness and the macOS 26 tinted/clear widget look (accented mode) as in UI-003 R9–R10.
 - **R14** Lead's call (2026-11-23): clicking a desktop widget opens `levels://device/<uuid>` (or `levels://` from a list widget), which launches or activates the Levels app; the app answers by opening its normal **device window** (MAC-001 R2a, a SwiftUI `Window` scene opened through its `levels://` URL handling) showing the popover content with that device scrolled into view and highlighted. It does not open the `MenuBarExtra` popover, which can't be opened from code. An unknown id opens the window at the top. **Assumption:** SwiftUI routes the URL to that window scene on both warm and cold launch (MAC-001 R2a); verify in QA-001.
 
@@ -83,14 +83,14 @@ ASCII sketches:
 - [ ] AC4 — Given "Icon only", then the label is the app symbol whatever the data.
 - [ ] AC5 — Given the popover opens, then this Mac is first and the list matches UI-001 order for the rest.
 - [ ] AC6 — Given the refresh button or ⌘R, then `refresh()` is called once.
-- [ ] AC7 — Given the desktop small widget with default config, then it shows the lowest **other** device.
+- [ ] AC7 — Given the desktop small widget with default config, then it shows the lowest device, this Mac included (R12, decision L); medium and large list this Mac first.
 - [ ] AC8 — Given VoiceOver on the menu bar item, then it reads "Levels: iPhone, 18 percent".
 - [ ] AC8a — Given the Mac widget is clicked, when `levels://device/<id of iPhone>` reaches the app (running or not), then the device window opens in front with the iPhone row highlighted, and the popover stays closed (R14; manual on a real Mac).
 - [ ] AC9 — Given a device unseen for 31 days, then it is absent from the popover and listed under Settings ▸ Old devices; Remove asks for confirmation and then calls `remove(_:)` once. Remove all my data asks for confirmation before calling `removeAllData()`.
 
 ## Tests
 
-- Unit (Swift Testing): `MenuBarLabelModel` (AC1–AC4), small-widget default excluding this Mac (AC7).
+- Unit (Swift Testing): `MenuBarLabelModel` (AC1–AC4), small-widget default and list families including this Mac (AC7).
 - Previews: label variants; popover in light/dark, empty, iCloud off, with stale rows.
 - Real hardware (Mac on macOS 26): label legibility on light and dark wallpapers with the transparent menu bar; popover glass; desktop widget in tinted and clear modes; AC6, AC8 with VoiceOver.
 
