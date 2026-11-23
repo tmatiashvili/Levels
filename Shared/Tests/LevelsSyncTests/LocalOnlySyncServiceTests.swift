@@ -1,0 +1,267 @@
+import Foundation
+import LevelsModel
+import Synchronization
+import Testing
+@testable import LevelsSync
+
+private let macID = DeviceID(UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000001")!)
+
+private func mac(level: Int? = 80, charging: Bool = false, pluggedIn: Bool? = false, lowPower: Bool = false,
+                 name: String = "Office Mac", at: Date) -> DeviceBattery {
+    DeviceBattery(id: macID, name: name, kind: .mac, level: level, isCharging: charging, isPluggedIn: pluggedIn,
+                  isLowPowerMode: lowPower, updatedAt: at)
+}
+
+private func airpod(level: Int, at: Date) -> DeviceBattery {
+    DeviceBattery(id: .accessory(key: "AA:BB:CC:DD:EE:FF", component: .left), name: "AirPods", kind: .accessory,
+                  accessory: AccessoryInfo(parentDeviceID: macID, kind: .airpods, groupID: UUID(), component: .left),
+                  level: level, isCharging: false, updatedAt: at)
+}
+
+/// ADR-0008 as applied locally (see `LocalWritePolicy` docs). Pure.
+@Suite("LOCAL LocalWritePolicy")
+struct LocalWritePolicyTests {
+    let policy = LocalWritePolicy()
+    let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+
+    func decide(_ new: DeviceBattery, _ reason: ReportReason, last: DeviceBattery?, ago: TimeInterval?) -> LocalWritePolicy.Decision {
+        policy.decide(new: new, reason: reason, lastWritten: last, lastWriteAt: ago.map { t0 - $0 }, now: t0)
+    }
+
+    @Test func W1_noLastWriteWritesNow() {
+        #expect(decide(mac(at: t0), .foreground, last: nil, ago: nil) == .writeNow)
+    }
+
+    @Test func W9_urgentUnchangedWritesNowOutsideFloor() {
+        for reason in ReportReason.allCases where reason.isUrgent && reason != .chargerChange {
+            #expect(decide(mac(at: t0), reason, last: mac(at: t0 - 20), ago: 20) == .writeNow, "\(reason)")
+        }
+    }
+
+    @Test func W9_urgentInsideFloorIsHeldToFloor() {
+        #expect(decide(mac(at: t0), .wake, last: mac(at: t0 - 4), ago: 4) == .writeAt(t0 + 6))
+    }
+
+    @Test func W7_nonUrgentUnchangedIsSkipped() {
+        for reason in ReportReason.allCases where !reason.isUrgent {
+            #expect(decide(mac(at: t0), reason, last: mac(at: t0 - 20 * 60), ago: 20 * 60) == .skip, "\(reason)")
+        }
+    }
+
+    @Test func W2_chargerChangeWaitsForDebounceIgnoringMinInterval() {
+        let new = mac(charging: true, pluggedIn: true, at: t0)
+        #expect(decide(new, .chargerChange, last: mac(at: t0 - 20), ago: 20) == .writeAt(t0 + 3))
+        #expect(decide(new, .batteryChange, last: mac(at: t0 - 20), ago: 20) == .writeAt(t0 + 3))
+        #expect(decide(new, .chargerChange, last: mac(at: t0 - 1), ago: 1) == .writeAt(t0 + 9))  // floor wins
+    }
+
+    @Test func W3_lowPowerModeChangeWaitsForDebounce() {
+        #expect(decide(mac(lowPower: true, at: t0), .batteryChange, last: mac(at: t0 - 20), ago: 20) == .writeAt(t0 + 3))
+    }
+
+    @Test func W4_local_anyLevelChangeWaitsForMinInterval() {
+        #expect(decide(mac(level: 79, at: t0), .batteryChange, last: mac(at: t0 - 20), ago: 20) == .writeAt(t0 + 40))
+        #expect(decide(mac(level: 79, at: t0), .batteryChange, last: mac(at: t0 - 61), ago: 61) == .writeNow)
+    }
+
+    @Test func W8_nameChangeWaitsForMinInterval() {
+        #expect(decide(mac(name: "Renamed", at: t0), .foreground, last: mac(at: t0 - 30), ago: 30) == .writeAt(t0 + 30))
+    }
+
+    @Test func W6_heartbeatWritesWhenLastWriteIs30MinOld() {
+        #expect(decide(mac(at: t0), .heartbeat, last: mac(at: t0 - 1799), ago: 1799) == .skip)
+        #expect(decide(mac(at: t0), .heartbeat, last: mac(at: t0 - 1800), ago: 1800) == .writeNow)
+    }
+}
+
+/// Counts widget reload requests.
+final class ReloadCounter: Sendable {
+    private let count = Mutex(0)
+    var value: Int { count.withLock { $0 } }
+    func hit() { count.withLock { $0 += 1 } }
+}
+
+@Suite("LOCAL LocalOnlySyncService")
+struct LocalOnlySyncServiceTests {
+    let clock = ManualClock()
+    let reloads = ReloadCounter()
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("levels-local-\(UUID().uuidString)")
+    var cache: SnapshotCache { SnapshotCache(directory: directory) }
+
+    func service() -> LocalOnlySyncService {
+        let clock = clock, reloads = reloads
+        return LocalOnlySyncService(cache: cache, widgetReloader: { reloads.hit() }, now: { clock.date }, clock: clock)
+    }
+
+    func cachedMac() -> DeviceBattery? { cache.read()?.devices.first { $0.id == macID } }
+
+    func advance(_ seconds: Int) { clock.advance(by: .seconds(seconds)) }
+
+    @Test func LOCAL_statusIsIdleAndLocalOnly() async {
+        let s = service()
+        #expect(await s.status == .idle)
+        #expect(s.isLocalOnly)
+        await s.start()
+        #expect(cache.read()?.syncStatus == .idle)
+    }
+
+    @Test func LOCAL_R5_firstReportWritesCacheAndReloadsWidgets() async {
+        let s = service()
+        let reading = mac(level: 66, charging: true, pluggedIn: true, at: clock.date)
+        #expect(await s.report([reading], reason: .launch) == .uploaded)
+        let file = cache.read()
+        #expect(file?.devices == [reading])
+        #expect(file?.ownDeviceID == macID)
+        #expect(file?.lastWritten.isEmpty == true)  // "accepted by the server" stays SYNC-001's
+        #expect(reloads.value == 1)
+    }
+
+    @Test func LOCAL_AC6a_urgencyAndFloor() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        advance(20)
+        let wake = mac(at: clock.date)
+        #expect(await s.report([wake], reason: .wake) == .uploaded)
+        #expect(cachedMac()?.updatedAt == wake.updatedAt)
+
+        advance(4)
+        let early = mac(at: clock.date)
+        let heldUntil = clock.date + 6
+        #expect(await s.report([early], reason: .userRefresh) == .held(until: heldUntil))
+        #expect(cachedMac()?.updatedAt == wake.updatedAt)
+        advance(6)
+        await waitFor { [self] in cachedMac()?.updatedAt == early.updatedAt }
+
+        advance(20)
+        #expect(await s.report([mac(at: clock.date)], reason: .foreground) == .skipped)
+        #expect(await s.report([mac(at: clock.date)], reason: .pushWake) == .skipped)
+        #expect(cachedMac()?.updatedAt == early.updatedAt)
+    }
+
+    @Test func LOCAL_AC5_levelChangeHeldToMinIntervalLatestWins() async {
+        let s = service()
+        let t0 = clock.date
+        _ = await s.report([mac(level: 80, at: t0)], reason: .launch)
+        advance(20)
+        #expect(await s.report([mac(level: 79, at: clock.date)], reason: .batteryChange) == .held(until: t0 + 60))
+        advance(10)
+        let latest = mac(level: 74, at: clock.date)
+        #expect(await s.report([latest], reason: .batteryChange) == .held(until: t0 + 60))
+        advance(29)
+        await settle()
+        #expect(cachedMac()?.level == 80)
+        advance(1)
+        await waitFor { [self] in cachedMac()?.level == 74 }
+        #expect(cachedMac() == latest)
+    }
+
+    @Test func LOCAL_AC6_chargerFlipWithinDebounceIsOneWriteWithFinalState() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        advance(20)
+        _ = await s.report([mac(charging: true, pluggedIn: true, at: clock.date)], reason: .chargerChange)
+        advance(2)
+        let final = mac(charging: false, pluggedIn: false, at: clock.date)
+        _ = await s.report([final], reason: .chargerChange)
+        #expect(cachedMac()?.isCharging == false)
+        #expect(cachedMac()?.updatedAt != final.updatedAt)
+        advance(1)  // 3 s after the first flip
+        await waitFor { [self] in cachedMac()?.updatedAt == final.updatedAt }
+        advance(10)
+        await settle()
+        #expect(cachedMac() == final)
+        #expect(reloads.value == 1)  // the write at 23 s falls in the 60 s reload window (R8a)
+        advance(30)
+        await waitFor { [reloads] in reloads.value == 2 }  // one trailing reload
+    }
+
+    @Test func LOCAL_W6_heartbeatRefreshesUpdatedAtAfter30Min() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        advance(29 * 60)
+        #expect(await s.report([mac(at: clock.date)], reason: .heartbeat) == .skipped)
+        advance(60)
+        let beat = mac(at: clock.date)
+        #expect(await s.report([beat], reason: .heartbeat) == .uploaded)
+        #expect(cachedMac()?.updatedAt == beat.updatedAt)
+    }
+
+    @Test func LOCAL_AC9a_widgetReloadsCoalescedTo60s() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        #expect(reloads.value == 1)
+        advance(10)
+        _ = await s.report([mac(at: clock.date)], reason: .wake)       // changes updatedAt
+        _ = await s.report([mac(at: clock.date)], reason: .sleep)      // inside the floor: held
+        #expect(reloads.value == 1)
+        advance(49)
+        await settle()
+        #expect(reloads.value == 1)
+        advance(1)                                                      // 60 s after the first reload
+        await waitFor { [reloads] in reloads.value == 2 }
+        advance(120)
+        await settle()
+        #expect(reloads.value == 2)                                     // exactly one trailing reload
+    }
+
+    @Test func LOCAL_AC9a_unchangedDevicesRequestNoReload() async {
+        let s = service()
+        let reading = mac(at: clock.date)
+        _ = await s.report([reading], reason: .launch)
+        advance(120)
+        #expect(await s.report([reading], reason: .userRefresh) == .uploaded)  // same values and updatedAt
+        await settle()
+        #expect(reloads.value == 1)
+    }
+
+    @Test func LOCAL_ownAndAccessoryInOneWriteJudgedPerRecord() async {
+        let s = service()
+        let t0 = clock.date
+        #expect(await s.report([mac(at: t0), airpod(level: 50, at: t0)], reason: .launch) == .uploaded)
+        #expect(cache.read()?.devices.count == 2)
+        #expect(cache.read()?.ownDeviceID == macID)
+        advance(20)
+        // Mac unchanged (skip), AirPod level changed (held to the 60 s gap).
+        #expect(await s.report([mac(at: clock.date), airpod(level: 45, at: clock.date)], reason: .batteryChange) == .held(until: t0 + 60))
+        advance(40)
+        await waitFor { [self] in cache.read()?.devices.first { $0.kind == .accessory }?.level == 45 }
+        #expect(cachedMac()?.updatedAt == t0)
+    }
+
+    @Test func LOCAL_keepsOtherDevicesInTheCache() async throws {
+        let phone = DeviceBattery(id: DeviceID(UUID()), name: "iPhone", kind: .iphone, level: 30, isCharging: false,
+                                  updatedAt: clock.date - 600)
+        try cache.update { $0.devices = [phone] }
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        #expect(Set(cache.read()?.devices.map(\.id) ?? []) == [phone.id, macID])
+    }
+
+    @Test func LOCAL_failedCacheWriteReturnsFailedAndRetriesOnNextTrigger() async throws {
+        // A newer format makes `update` refuse to write (SYNC-002).
+        let url = cache.fileURL
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"formatVersion": 99}"#.utf8).write(to: url)
+        let s = service()
+        #expect(await s.report([mac(at: clock.date)], reason: .launch) == .failed(retryAt: nil))
+        #expect(reloads.value == 0)
+        try FileManager.default.removeItem(at: url)
+        advance(1)
+        let next = mac(at: clock.date)
+        #expect(await s.report([next], reason: .foreground) == .uploaded)  // still W1: nothing was written
+        #expect(cachedMac() == next)
+    }
+
+    @Test func LOCAL_refreshReloadsCache() async {
+        let s = service()
+        #expect(await s.refresh(.userPull) == false)  // no file yet
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        #expect(await s.refresh(.userPull))
+    }
+
+    @Test func LOCAL_usableThroughTheBatterySyncingSeam() async {
+        let sync: any BatterySyncing = service()
+        #expect(await sync.report([mac(at: clock.date)], reason: .launch) == .uploaded)
+        #expect(await sync.status == .idle)
+    }
+}

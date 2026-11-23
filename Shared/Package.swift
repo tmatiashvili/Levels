@@ -5,6 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "Shared",
+    defaultLocalization: "en",
     platforms: [.iOS(.v26), .macOS(.v26), .watchOS(.v26)],
     products: [
         .library(name: "LevelsModel", targets: ["LevelsModel"]),
@@ -17,7 +18,7 @@ let package = Package(
         .target(name: "LevelsModel"),
         .target(name: "LevelsSync", dependencies: ["LevelsModel"]),
         .target(name: "LevelsReaders", dependencies: ["LevelsModel"]),
-        .target(name: "LevelsUI", dependencies: ["LevelsModel"]),
+        .target(name: "LevelsUI", dependencies: ["LevelsModel"], resources: [.process("Resources")]),
         .target(name: "LevelsWidgetKit", dependencies: ["LevelsModel", "LevelsUI"]),
         .testTarget(name: "LevelsModelTests", dependencies: ["LevelsModel"]),
         .testTarget(name: "LevelsSyncTests", dependencies: ["LevelsSync"]),

@@ -9,9 +9,10 @@ PRODUCT_NAME = Levels
 PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels
 INFOPLIST_FILE = Levels-Mac/Info.plist
 
-// One file for Debug and Release (lead's call 14): aps-environment is
-// `development`; exporting for TestFlight, App Store or Developer ID rewrites
-// it to `production`.
+// One file for Debug and Release (lead's call 14). While the team is a free
+// Personal Team it holds no iCloud or push keys (SETUP.md, "Free Personal
+// Team"). With a paid team it gets them back, and aps-environment is
+// `development`; exporting for Developer ID rewrites it to `production`.
 CODE_SIGN_ENTITLEMENTS = Levels-Mac/Levels-Mac.entitlements
 
 // ADR-0013 / MAC-001: Hardened Runtime on, no exceptions; sandbox on for
