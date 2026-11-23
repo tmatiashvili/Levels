@@ -101,7 +101,7 @@ import os
         tasks.append(Task { await self.store.start() })
         if reporting.isEnabled {
             await reporter.start()  // MAC-002 R6a launch report, IOPS changes, 30-min heartbeat
-            await accessories.start()  // MAC-003: launch scan, HID connect/disconnect, 5/15-min poll
+            await accessories.start()  // MAC-003: launch scan, HID + Bluetooth connect/disconnect, 5/15-min poll
         } else {
             Self.logger.notice("Reporting is off (Remove all my data); reporters not started")
         }
@@ -255,8 +255,10 @@ final class MacSnapshotSource: DeviceSnapshotSource {
     func current() async throws -> SnapshotFile { try await base.current() }
     func changes() -> AsyncStream<Void> { base.changes() }
 
+    /// MAC-003: a refresh also scans accessories (⌘R always, popover open at most once a minute).
     func requestRefresh(userInitiated: Bool) async throws {
         try await base.requestRefresh(userInitiated: userInitiated)
+        await accessories.refresh(userInitiated: userInitiated)
         await sync.refresh(.refresh(userInitiated: userInitiated))
     }
 

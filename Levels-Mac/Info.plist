@@ -25,6 +25,8 @@
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Levels watches for Bluetooth accessories such as AirPods connecting, so it can show their battery levels.</string>
 	<key>LSUIElement</key>
 	<true/>
 </dict>

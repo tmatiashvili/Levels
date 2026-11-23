@@ -87,8 +87,19 @@ public protocol AccessoryBatteryReader: Sendable {
     /// Scans every source now. Never throws; a source that fails adds a problem.
     func read() async -> AccessoryScan
     /// One element per connect or disconnect the platform reports (IOKit HID match and
-    /// termination). Platforms without such events emit nothing.
-    func changes() -> AsyncStream<Void>
+    /// termination, IOBluetooth connect and disconnect). Platforms without such events emit nothing.
+    func changes() -> AsyncStream<AccessoryChange>
+}
+
+/// A connect or disconnect event from ``AccessoryBatteryReader/changes()``.
+public enum AccessoryChange: Sendable, Equatable {
+    /// IOKit HID match or termination: the registry already shows the new state, so scan now.
+    case hid
+    /// Any Bluetooth device connected (IOBluetooth). AirPods publish their levels a few
+    /// seconds later, so the reporter scans after a delay.
+    case bluetoothConnected
+    /// A Bluetooth device disconnected: scan now (R4: nothing is written for it).
+    case bluetoothDisconnected
 }
 
 /// Normalises Bluetooth addresses to the `accessoryKey` form (MAC-003 R3).
@@ -112,12 +123,12 @@ public enum BluetoothAddress {
 /// Scripted ``AccessoryBatteryReader`` for unit tests and previews.
 public final class FixedAccessoryReader: AccessoryBatteryReader {
     private let state: Mutex<(scan: AccessoryScan, reads: Int)>
-    private let stream: AsyncStream<Void>
-    private let continuation: AsyncStream<Void>.Continuation
+    private let stream: AsyncStream<AccessoryChange>
+    private let continuation: AsyncStream<AccessoryChange>.Continuation
 
     public init(_ scan: AccessoryScan = .empty) {
         state = Mutex((scan, 0))
-        (stream, continuation) = AsyncStream.makeStream(of: Void.self)
+        (stream, continuation) = AsyncStream.makeStream(of: AccessoryChange.self)
     }
 
     public func read() async -> AccessoryScan {
@@ -127,15 +138,15 @@ public final class FixedAccessoryReader: AccessoryBatteryReader {
         }
     }
 
-    public func changes() -> AsyncStream<Void> { stream }
+    public func changes() -> AsyncStream<AccessoryChange> { stream }
 
     /// What `read()` returns from now on.
     public func set(_ scan: AccessoryScan) { state.withLock { $0.scan = scan } }
 
     /// Sets `scan` and emits a connect/disconnect event.
-    public func emit(_ scan: AccessoryScan) {
+    public func emit(_ scan: AccessoryScan, _ change: AccessoryChange = .hid) {
         set(scan)
-        continuation.yield()
+        continuation.yield(change)
     }
 
     public var readCount: Int { state.withLock { $0.reads } }

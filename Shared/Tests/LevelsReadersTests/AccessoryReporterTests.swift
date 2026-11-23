@@ -147,6 +147,97 @@ struct AccessoryReporterTests {
         #expect(await sync.calls.count == 1)
     }
 
+    // MARK: Triggers: Bluetooth connect, refresh, popover open
+
+    @Test func bluetoothConnectScansAt3sAnd15sAndSwitchesPollTo5Min() async {
+        let reader = FixedAccessoryReader(.empty)
+        let r = reporter(reader)
+        await r.start()
+        await waitFor { [clock] in clock.sleeperCount == 1 }
+        #expect(await r.currentInterval == .seconds(900))
+
+        reader.emit(.empty, .bluetoothConnected)  // AirPods connected, levels not published yet
+        await waitFor { [clock] in clock.sleeperCount == 2 }  // poll + first delayed scan
+        #expect(await r.currentInterval == .seconds(300))
+        #expect(reader.readCount == 1)  // no scan yet
+
+        reader.set(airPods(90, 88, 50))
+        clock.advance(by: .seconds(3))
+        await waitFor { [sync] in await sync.calls.count == 1 }
+        #expect(await sync.calls[0].reason == .batteryChange)
+        #expect(reader.readCount == 2)
+
+        clock.advance(by: .seconds(12))  // +15 s from the connect
+        await waitFor { reader.readCount == 3 }
+        await waitFor { [sync] in await sync.calls.count == 2 }
+        await waitFor { [clock] in clock.sleeperCount == 1 }  // only the poll is left
+        #expect(await r.currentInterval == .seconds(300))
+        await r.stop()
+        #expect(clock.sleeperCount == 0)
+    }
+
+    @Test func connectScanKeeps5MinPollEvenWhenNothingShowsYet() async {
+        let reader = FixedAccessoryReader(.empty)
+        let r = reporter(reader)
+        await r.start()
+        await waitFor { reader.readCount == 1 }
+        reader.emit(.empty, .bluetoothConnected)
+        await waitFor { [clock] in clock.sleeperCount == 2 }
+        clock.advance(by: .seconds(15))
+        await waitFor { reader.readCount == 3 }
+        await settle()
+        #expect(await r.currentInterval == .seconds(300))
+        await r.stop()
+    }
+
+    @Test func secondConnectReplacesPendingDelayedScans() async {
+        let reader = FixedAccessoryReader(.empty)
+        let r = reporter(reader)
+        await r.start()
+        await waitFor { reader.readCount == 1 }
+        reader.emit(.empty, .bluetoothConnected)
+        await waitFor { [clock] in clock.sleeperCount == 2 }
+        reader.emit(.empty, .bluetoothConnected)
+        await settle()
+        await waitFor { [clock] in clock.sleeperCount == 2 }  // still one poll + one delayed scan
+        await r.stop()
+    }
+
+    @Test func bluetoothDisconnectScansNow() async {
+        let reader = FixedAccessoryReader(airPods(40, 35, 80))
+        let r = reporter(reader)
+        await r.start()
+        await waitFor { [sync] in await sync.calls.count == 1 }
+        reader.emit(.empty, .bluetoothDisconnected)
+        await waitFor { reader.readCount == 2 }
+        await settle()
+        #expect(await sync.calls.count == 1)  // R4: last values kept, nothing written
+        #expect(await r.connected.isEmpty)
+        await r.stop()
+    }
+
+    @Test func userRefreshAlwaysScans() async {
+        let reader = FixedAccessoryReader(mouse)
+        let r = reporter(reader)
+        await r.refresh(userInitiated: true)
+        await r.refresh(userInitiated: true)
+        #expect(reader.readCount == 2)
+        #expect(await sync.reasons == [.userRefresh, .userRefresh])
+    }
+
+    @Test func popoverOpenScansAtMostOncePerMinute() async {
+        let reader = FixedAccessoryReader(mouse)
+        let r = reporter(reader)
+        await r.refresh(userInitiated: false)
+        clock.advance(by: .seconds(59))
+        await r.refresh(userInitiated: false)
+        #expect(reader.readCount == 1)
+        clock.advance(by: .seconds(1))
+        await r.refresh(userInitiated: false)
+        #expect(reader.readCount == 2)
+        #expect(await sync.reasons == [.foreground, .foreground])
+    }
+
     // MARK: SYNC-001 R15a reporting off
 
     @Test func R15a_offScansAndSendsNothingFromStartOrReport() async {
@@ -161,6 +252,25 @@ struct AccessoryReporterTests {
         #expect(reader.readCount == 0)  // not even scanned
         #expect(await sync.calls.isEmpty)
         #expect(clock.sleeperCount == 0)  // no poll armed
+    }
+
+    @Test func R15a_offSkipsRefreshesAndBluetoothConnectScans() async {
+        let reporting = ReportingSetting.inMemory()
+        let reader = FixedAccessoryReader(.empty)
+        let r = reporter(reader, reporting: reporting)
+        await r.start()
+        await waitFor { reader.readCount == 1 }
+        reader.emit(.empty, .bluetoothConnected)
+        await waitFor { [clock] in clock.sleeperCount == 2 }
+        reporting.setEnabled(false)
+        clock.advance(by: .seconds(15))  // delayed scans fire and scan nothing
+        await r.refresh(userInitiated: true)
+        await r.refresh(userInitiated: false)
+        reader.emit(mouse, .bluetoothConnected)  // ignored: no new delayed scans
+        await settle()
+        #expect(reader.readCount == 1)
+        #expect(await sync.calls.isEmpty)
+        await r.stop()
     }
 
     @Test func R15a_turningOffStopsConnectEventsAndThePoll() async {

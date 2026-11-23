@@ -2,6 +2,7 @@
 // the pure parsers (`HIDAccessoryParser`, `SystemProfilerBluetoothParser`) and the
 // reporter are in LevelsReaders, so they run in `swift test`.
 import Foundation
+import IOBluetooth
 import IOKit
 import LevelsReaders
 
@@ -32,16 +33,19 @@ struct MacAccessoryReader: AccessoryBatteryReader {
     }
 
     /// HID connect and disconnect (ADR-0015: `kIOFirstMatchNotification` and
-    /// `kIOTerminatedNotification` on an `IONotificationPort` on the main queue).
-    func changes() -> AsyncStream<Void> {
-        let (stream, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    /// `kIOTerminatedNotification` on an `IONotificationPort` on the main queue), plus
+    /// Bluetooth connect and disconnect of any device (IOBluetooth, main run loop): AirPods
+    /// are audio devices, so the HID notification never fires for them.
+    func changes() -> AsyncStream<AccessoryChange> {
+        let (stream, continuation) = AsyncStream.makeStream(of: AccessoryChange.self, bufferingPolicy: .bufferingNewest(16))
         Task { @MainActor in
-            guard let registration = HIDMatchNotifications(continuation) else {
-                continuation.finish()
-                return
-            }
+            let hid = HIDMatchNotifications(continuation)
+            let bluetooth = BluetoothConnectNotifications(continuation)
             continuation.onTermination = { _ in
-                Task { @MainActor in registration.cancel() }
+                Task { @MainActor in
+                    hid?.cancel()
+                    bluetooth.cancel()
+                }
             }
         }
         return stream
@@ -76,15 +80,15 @@ struct MacAccessoryReader: AccessoryBatteryReader {
 /// isolated: the port delivers on the main queue and teardown runs there too.
 @MainActor private final class HIDMatchNotifications {
     private final class Box: Sendable {
-        let continuation: AsyncStream<Void>.Continuation
-        init(_ continuation: AsyncStream<Void>.Continuation) { self.continuation = continuation }
+        let continuation: AsyncStream<AccessoryChange>.Continuation
+        init(_ continuation: AsyncStream<AccessoryChange>.Continuation) { self.continuation = continuation }
     }
 
     private let port: IONotificationPortRef
     private var iterators: [io_iterator_t] = []
     private let context: UnsafeMutableRawPointer
 
-    init?(_ continuation: AsyncStream<Void>.Continuation) {
+    init?(_ continuation: AsyncStream<AccessoryChange>.Continuation) {
         guard let port = IONotificationPortCreate(kIOMainPortDefault) else { return nil }
         self.port = port
         context = Unmanaged.passRetained(Box(continuation)).toOpaque()
@@ -93,7 +97,7 @@ struct MacAccessoryReader: AccessoryBatteryReader {
         let callback: IOServiceMatchingCallback = { context, iterator in
             HIDMatchNotifications.drain(iterator)  // re-arms the notification
             guard let context else { return }
-            Unmanaged<Box>.fromOpaque(context).takeUnretainedValue().continuation.yield()
+            Unmanaged<Box>.fromOpaque(context).takeUnretainedValue().continuation.yield(.hid)
         }
         for type in [kIOFirstMatchNotification, kIOTerminatedNotification] {
             var iterator: io_iterator_t = 0
@@ -127,6 +131,57 @@ struct MacAccessoryReader: AccessoryBatteryReader {
         iterators = []
         IONotificationPortDestroy(port)
         Unmanaged<Box>.fromOpaque(context).release()
+    }
+}
+
+/// IOBluetooth connect and disconnect for any device (MAC-003 triggers). Registered on the
+/// main thread, so callbacks arrive on the main run loop. Connect callbacks for devices that
+/// were already connected (IOBluetooth replays them right after registering) only arm the
+/// disconnect notification: the launch scan already read them.
+@MainActor private final class BluetoothConnectNotifications: NSObject {
+    private let continuation: AsyncStream<AccessoryChange>.Continuation
+    private var connectNotification: IOBluetoothUserNotification?
+    /// One disconnect notification per connected device, by address.
+    private var disconnectNotifications: [String: IOBluetoothUserNotification] = [:]
+    private let registeredAt = Date()
+    private var cancelled = false
+
+    init(_ continuation: AsyncStream<AccessoryChange>.Continuation) {
+        self.continuation = continuation
+        super.init()
+        connectNotification = IOBluetoothDevice.register(forConnectNotifications: self,
+                                                         selector: #selector(connected(_:device:)))
+        if connectNotification == nil {
+            MacAppModel.logger.error("IOBluetooth connect notification unavailable; AirPods are found by the poll only")
+        }
+    }
+
+    @objc private func connected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        guard !cancelled else { return }
+        let key = device.addressString ?? ObjectIdentifier(device).debugDescription
+        if disconnectNotifications[key] == nil {
+            disconnectNotifications[key] = device.register(forDisconnectNotification: self,
+                                                           selector: #selector(disconnected(_:device:)))
+        }
+        guard Date().timeIntervalSince(registeredAt) > 2 else { return }  // replay of an existing connection
+        continuation.yield(.bluetoothConnected)
+    }
+
+    @objc private func disconnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        notification.unregister()
+        let key = device.addressString ?? ObjectIdentifier(device).debugDescription
+        disconnectNotifications[key] = nil
+        guard !cancelled else { return }
+        continuation.yield(.bluetoothDisconnected)
+    }
+
+    func cancel() {
+        guard !cancelled else { return }
+        cancelled = true
+        connectNotification?.unregister()
+        connectNotification = nil
+        for notification in disconnectNotifications.values { notification.unregister() }
+        disconnectNotifications = [:]
     }
 }
 
