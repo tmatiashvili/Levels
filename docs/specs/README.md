@@ -2,6 +2,45 @@
 
 How to write one: [ADR-0001](../adr/0001-record-architecture-decisions.md) and [template.md](template.md). Specs for v0.1–v0.2 move from Draft to Ready after review; v0.3 and later stay Outline until their milestone starts. Decisions are indexed in [../adr/README.md](../adr/README.md); terms are in [../glossary.md](../glossary.md); owner decisions and lead's calls are in [../decisions-log.md](../decisions-log.md).
 
+## Now: free Personal Team (Mac-first, then the Mac hub)
+
+Owner decision K (2026-11-23): no paid Apple Developer Program for now, so no iCloud and no push. Until the owner enrolls, the build order is:
+
+1. SYNC-002 (done), the local-only `BatterySyncing` stand-in, MAC-002, UI-001.
+2. UI-004 (menu-bar content; desktop widgets if the free team allows the App Group), MAC-001 without its iCloud and push parts.
+3. MAC-003 (accessories), pulled forward from v0.3.
+
+Owner decision M (2026-11-24): still no paid program, but the iPhone works now through the **Mac as a hub on the home Wi-Fi** ([ADR-0020](../adr/0020-local-network-hub-sync.md)). The Mac serves the levels it holds; the iPhone app and widget read them, and the iPhone sends its own battery to the Mac. Same network only; the free iPhone install expires every 7 days. Then:
+
+4. NET-001 (Mac hub server). Its first step is the TLS-PSK check (NET-001 AC1).
+5. NET-002 (pairing), and RPT-001's iPhone reader and triggers without the push parts (in parallel).
+6. NET-003 (iPhone hub client), then NET-004 (iPhone app and widgets in hub mode) together with the UI-002 and UI-003 parts it names. NET-004's widget variant waits on the free-team probe (`feature/ios-free-probe`).
+7. A real-device pass with the owner's Mac and iPhone (NET-001…NET-004 hardware ACs).
+
+SPIKE-001, SYNC-001, RPT-002's iCloud parts, iPad and Watch still wait for enrollment. The v0.1 plan below is unchanged and resumes then; at that point CloudKit replaces the hub (ADR-0020 Decision 12).
+
+| ID | Title | Status | Depends on |
+|---|---|---|---|
+| [NET-001](NET-001-mac-hub-server.md) | Mac hub server on the home network | Ready | SYNC-002, MAC-001, MAC-002 |
+| [NET-002](NET-002-pairing.md) | Pairing an iPhone with the Mac hub | Ready | NET-001 |
+| [NET-003](NET-003-iphone-hub-client.md) | iPhone hub client and reporting to the Mac | Ready | NET-001, NET-002, SYNC-002, UI-001 |
+| [NET-004](NET-004-iphone-app-and-widgets-local.md) | iPhone app and widgets in hub mode (free team) | Ready | NET-002, NET-003, UI-001, UI-002, UI-003 |
+
+## Next: Levels Pro (launch)
+
+Owner decisions N–Q (2026-11-24): Levels becomes a paid product. Free shows this device and one small widget; **Levels Pro** (monthly, yearly with a 1-week trial, or lifetime) adds the other devices, every widget kind, alerts and history on the iPhone. Pro is built now and tested with a local StoreKit file; the paid Apple Developer Program comes only at launch, together with iCloud. The iPhone ships in the App Store; the Mac app stays a free, notarized download with no paywall ([ADR-0021](../adr/0021-levels-pro-subscription.md), [ADR-0022](../adr/0022-distribution.md)). Legal drafts: [privacy policy](../legal/privacy-policy.md), [terms of use](../legal/terms-of-use.md).
+
+| ID | Title | Status | Depends on |
+|---|---|---|---|
+| [MON-001](MON-001-levels-pro-entitlements.md) | Levels Pro products and entitlements | Draft | SYNC-002, NET-004, UI-003 |
+| [MON-002](MON-002-paywall-and-gating.md) | Levels Pro paywall and gates | Draft | MON-001, UI-001, UI-002, UI-003, NET-004 |
+| [REL-001](REL-001-app-store-readiness.md) | App Store and Mac download readiness | Draft | MON-001, MON-002, SYNC-001, NET-004 |
+| [DEMO-001](DEMO-001-sample-devices-mode.md) | Try with sample devices (demo mode) | Ready | NET-004, UI-002, UI-003, MON-001, MON-002 |
+| [PUSH-001](PUSH-001-push-widget-updates.md) | Push-driven widget updates and the push relay | Draft | NET-001, NET-002, NET-003, NET-004, UI-003 |
+| [LIVE-001](LIVE-001-live-activity.md) | Live levels Live Activity (iPhone, Mac, AirPods) | Draft | NET-003, NET-004, UI-003, PUSH-001 |
+
+Order: MON-001, then MON-002, both on the free team; REL-001's "now" items (R1) in parallel; the rest of REL-001 at enrollment.
+
 ## v0.1 — Mac agent and iPhone app with widgets
 
 | ID | Title | Status | Depends on |
@@ -34,8 +73,8 @@ How to write one: [ADR-0001](../adr/0001-record-architecture-decisions.md) and [
 | ID | Title | Milestone | Status | Depends on |
 |---|---|---|---|---|
 | [MAC-003](MAC-003-mac-accessory-reporting.md) | Mac accessory reporting | v0.3 | Outline | MAC-001, MAC-002, SYNC-001, SYNC-002 |
-| [ALR-001](ALR-001-low-battery-alerts.md) | Low-battery alerts | v0.4 | Outline | SYNC-001, SYNC-002, RPT-001 |
-| [HIS-001](HIS-001-history-and-charts.md) | 7-day history, charts and low-power-mode tracking | v0.5 | Outline | SYNC-001, SYNC-002, RPT-001, UI-001 |
+| [ALR-001](ALR-001-low-battery-alerts.md) | Low-battery alerts | v0.4 | Ready (Mac-first local; iCloud part Outline) | SYNC-002, MAC-001, MAC-003 |
+| [HIS-001](HIS-001-history-and-charts.md) | 7-day history, charts and low-power-mode tracking (Mac, local only) | v0.5 | Ready | SYNC-002, MAC-002, MAC-003, UI-001, UI-004 |
 | [NRB-001](NRB-001-ble-nearby-mode.md) | BLE nearby mode (Mac to iPhone without the cloud) | later | Outline | SYNC-001, MAC-001, RPT-001 |
 | [FAM-001](FAM-001-family-sharing.md) | Family sharing | later | Outline | SYNC-001, SYNC-002 |
 

@@ -1,0 +1,14 @@
+// Levels-iOSTests: unit tests (Swift Testing) for the logic that lives in the
+// Levels-iOS target, hosted in the app. Runs on an iPhone simulator:
+//   xcodebuild test -project Levels.xcodeproj -scheme Levels-iOS -destination 'platform=iOS Simulator,name=iPhone 18 Pro'
+#include "Levels.xcconfig"
+
+SDKROOT = iphoneos
+SUPPORTED_PLATFORMS = iphoneos iphonesimulator
+TARGETED_DEVICE_FAMILY = 1
+
+PRODUCT_NAME = LevelsTests
+PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels.tests
+TEST_HOST = $(BUILT_PRODUCTS_DIR)/Levels.app/Levels
+BUNDLE_LOADER = $(TEST_HOST)
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks @loader_path/Frameworks

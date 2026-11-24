@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LevelsAppGroupID</key>
+	<string>$(DEVELOPMENT_TEAM).$(LEVELS_RDNS).levels</string>
+	<key>LevelsKeychainGroup</key>
+	<string>$(DEVELOPMENT_TEAM).$(LEVELS_RDNS).levels.shared</string>
+	<key>LevelsKeychainService</key>
+	<string>$(LEVELS_RDNS).levels.device-identity</string>
+	<key>LevelsPushRelayURL</key>
+	<string>$(LEVELS_PUSH_RELAY_URL)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>levels</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleDisplayName</key>
+	<string>Levels</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Levels watches for Bluetooth accessories such as AirPods connecting, so it can show their battery levels.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_levels._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Levels shares your Mac's battery and accessories with your iPhone on this Wi-Fi.</string>
+	<key>LSUIElement</key>
+	<true/>
+</dict>
+</plist>

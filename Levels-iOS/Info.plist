@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LevelsAppGroupID</key>
+	<string>group.$(LEVELS_RDNS).levels</string>
+	<key>LevelsKeychainGroup</key>
+	<string>$(DEVELOPMENT_TEAM).$(LEVELS_RDNS).levels.shared</string>
+	<key>LevelsKeychainService</key>
+	<string>$(LEVELS_RDNS).levels.device-identity</string>
+	<key>LevelsPushRelayURL</key>
+	<string>$(LEVELS_PUSH_RELAY_URL)</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).battery-refresh</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>levels</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_levels._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Levels connects to your Mac on this Wi-Fi to show its battery and your accessories, and to send this iPhone's battery to the Mac.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+</dict>
+</plist>

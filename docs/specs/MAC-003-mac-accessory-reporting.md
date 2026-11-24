@@ -16,8 +16,8 @@ iPhone's Batteries widget never shows a Magic Mouse or Keyboard, and it shows Ai
 
 ## Scope
 
-- In: Magic Mouse, Keyboard and Trackpad, and other Bluetooth HID devices that expose `BatteryPercent`; AirPods and Beats (left, right, case, or single battery) while connected to this Mac; connect and disconnect detection; stable UUIDv5 accessory IDs (ADR-0005); one `DeviceBattery` record per accessory component with `parentDeviceId` = this Mac.
-- Out: accessories connected to iPhone, iPad or Watch (no public API); charging state for AirPods (not exposed); non-Bluetooth USB devices; alerts (ALR).
+- In: Magic Mouse, Keyboard and Trackpad, and other Bluetooth HID devices that expose `BatteryPercent`; AirPods and Beats (left, right, case, or single battery) while connected to this Mac, and paired AirPods that macOS hears nearby (with charging, ADR-0015 2a); connect and disconnect detection; stable UUIDv5 accessory IDs (ADR-0005); one `DeviceBattery` record per accessory component with `parentDeviceId` = this Mac.
+- Out: accessories connected to iPhone, iPad or Watch (no public API); non-Bluetooth USB devices; alerts (ALR).
 
 ## Behaviour
 
@@ -38,6 +38,26 @@ To be detailed when v0.3 starts:
 - an `IONotificationPort` on the main queue;
 - a `Process` run with a 5 s timeout;
 - JSON parsing with `JSONSerialization` into typed structs, with fixture-based unit tests built from real `system_profiler` output (redacted).
+
+## Implementation notes (2026-11-23, pulled forward into the free-team build)
+
+What was built, and where it differs from the outline above:
+
+- **Data on the owner's MacBook (macOS 27.2.1), re-checked:** `ioreg -r -k BatteryPercent -l` returned nothing; `AppleDeviceManagementHIDEventService` had one entry, the built-in keyboard/trackpad (`Built-In = true`, no `BatteryPercent`, no `DeviceAddress`); `system_profiler SPBluetoothDataType -json` took about 0.1 s and listed the AirPods under `device_not_connected` with cached `device_batteryLevelLeft/Right/Case` (`"100%"`, `"100%"`, `"45%"`). No Magic peripheral or AirPods were connected, so the connected-device shapes in the fixtures are the captured file with the AirPods entry moved under `device_connected`, and hand-written HID entries with ADR-0015's key names. ADR-0015's sources stand; its **Assumptions:** are still open.
+- **Code:** `AccessoryBatteryReader` (protocol), `AccessoryReading`/`AccessoryScan`, the pure `SystemProfilerBluetoothParser` and `HIDAccessoryParser`, `BluetoothAddress`, `FixedAccessoryReader` and `AccessoryReporter` are in LevelsReaders. `MacAccessoryReader` (IOKit registry read, `IONotificationPort` match/terminate on the main queue, `system_profiler` with a 5 s timeout under `LEVELS_UNSANDBOXED`) is in Levels-Mac. Fixtures are in `Shared/Tests/LevelsReadersTests/Fixtures` (fake addresses, serials and names).
+- **Deviation, reader shape:** the Design names two `BatteryReader` conformers. `BatteryReader` returns one reading of the device's own battery, so accessories use their own protocol, `AccessoryBatteryReader`, with one Mac reader that merges both sources (IOKit first, so a peripheral listed by both keeps the 1 % level).
+- **Deviation, reporter:** a separate `AccessoryReporter` actor reports accessories through `BatterySyncing`, next to `BatteryReporter` (which stays own-battery only). Its scans: launch, HID connect/disconnect, wake, power-state change (not every 1 % IOPS step), and the poll.
+- **Triggers (2026-11-24 fix):** AirPods connected after launch were not found for up to 15 minutes, because they are audio devices and the HID notification never fires for them. Now also:
+  - Bluetooth connect of any device (`IOBluetoothDevice.register(forConnectNotifications:selector:)`): the poll switches to 5 minutes at once, and scans run 3 s and 15 s after the connect (AirPods publish levels a few seconds late). Replays for devices already connected at launch are ignored.
+  - Bluetooth disconnect (per-device `register(forDisconnectNotification:selector:)`): scan now; R4 still holds.
+  - ⌘R / the refresh button (`.userRefresh`): scan now. Popover open (`.foreground`): scan, at most once a minute.
+  - The Info.plist has `NSBluetoothAlwaysUsageDescription`; macOS asks for Bluetooth permission once.
+- **Poll (ADR-0014 rule 5):** one timer, re-armed after every scan: 5 minutes while any accessory battery is connected (HID or AirPods, which also covers R1) or headphones are listed as connected, otherwise 15 minutes; 60 s tolerance. Poll scans use `ReportReason.heartbeat`, so `LocalWritePolicy` writes a level change after its 60 s gap and an unchanged accessory every 30 minutes.
+- **Names:** every component record carries the plain device name ("TPods"), not "TPods — Left", so UI-001 R13's group name (shortest name) is the headset name. Components are told apart by `component`.
+- **Group ID:** `accessoryGroupId = UUIDv5(LevelsAccessoryNamespace, "accessory-group:" + accessoryKey)` (`DeviceID.accessoryGroup(key:)`); one-way like the record names.
+- **R5:** a device whose battery keys can't be trusted (unknown `device_batteryLevel*` key, a value that is not `NN%`, a missing or malformed address, a non-integer `BatteryPercent`) is dropped whole; each distinct problem is logged once per run, with no address in the text.
+- **R6:** lead's call 16 turns the sandbox off for Debug and Release (ADR-0013 note), so `LEVELS_UNSANDBOXED` is set in both.
+- **Charging (ADR-0015 amendment 2a, 2026-11-24):** AirPods left, right and case get `isCharging` and `isPluggedIn` from macOS's accessory power sources (`pmset -g accps -xml`), which also give levels while the AirPods are nearby but not connected (for example charging in the case). Only the owner's paired AirPods have such a source; it is matched to the paired device by vendor and product ID, then name, or skipped. A level or charging change is picked up within about a minute and scanned at once. Magic peripherals and `system_profiler`-only devices keep `isCharging = false` and no `isPluggedIn`.
 
 ## Edge cases and failure modes
 

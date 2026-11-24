@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LevelsAppGroupID</key>
+	<string>group.$(LEVELS_RDNS).levels</string>
+	<key>LevelsKeychainGroup</key>
+	<string>$(DEVELOPMENT_TEAM).$(LEVELS_RDNS).levels.shared</string>
+	<key>LevelsKeychainService</key>
+	<string>$(LEVELS_RDNS).levels.device-identity</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_levels._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>The Levels widget connects to your Mac on this Wi-Fi to show its latest battery levels.</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>

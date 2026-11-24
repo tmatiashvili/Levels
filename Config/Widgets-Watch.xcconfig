@@ -1,0 +1,20 @@
+// Widgets-Watch: watchOS widget extension (complications + Smart Stack),
+// embedded in Levels-Watch (ADR-0003, UI-006).
+// Links LevelsModel, LevelsUI, LevelsWidgetKit only (ADR-0003 §3).
+#include "Levels.xcconfig"
+
+SDKROOT = watchos
+SUPPORTED_PLATFORMS = watchos watchsimulator
+TARGETED_DEVICE_FAMILY = 4
+
+PRODUCT_NAME = LevelsWatchWidgets
+// Must start with the watch app's bundle ID (ADR-0003 §5).
+PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels.watchkitapp.widgets
+INFOPLIST_FILE = Widgets-Watch/Info.plist
+INFOPLIST_KEY_CFBundleDisplayName = Levels
+
+CODE_SIGN_ENTITLEMENTS = Widgets-Watch/Widgets-Watch.entitlements
+
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks @executable_path/../../Frameworks
+SKIP_INSTALL = YES
+APPLICATION_EXTENSION_API_ONLY = YES

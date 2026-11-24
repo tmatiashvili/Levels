@@ -1,0 +1,501 @@
+import Foundation
+import LevelsModel
+import LevelsNet
+import Synchronization
+import os
+
+/// The one outbox slot of NET-003 R2: the latest own reading that reached the cache and has
+/// not been accepted by the Mac yet. Latest wins. Filled by ``LocalOnlySyncService``'s
+/// `onOwnWrite` (direct writes and held flushes alike).
+public final class HubOutbox: Sendable {
+    private let slot = Mutex<DeviceBattery?>(nil)
+    public init() {}
+    public var value: DeviceBattery? { slot.withLock { $0 } }
+    public func put(_ reading: DeviceBattery) { slot.withLock { $0 = reading } }
+    /// R4: clears the slot only if it still holds `reading` (a newer one may have arrived).
+    public func clear(ifStill reading: DeviceBattery) { slot.withLock { if $0 == reading { $0 = nil } } }
+    public func clear() { slot.withLock { $0 = nil } }
+}
+
+/// The iPhone's sync in hub mode (NET-003, ADR-0020; lead's calls 22, 24): wraps
+/// ``LocalOnlySyncService`` (own cache writes, ADR-0008 throttling, widget reloads), sends this
+/// iPhone's own reading to the paired Mac, fetches the Mac's snapshot with an ETag, runs the
+/// foreground long-poll, and records `.notPaired` / `.awayFromHub` and the other R9 states
+/// in the App Group cache so the app and widgets show them.
+///
+/// Builder's calls kept from the spec's Design: the `HubClient` is built here from the
+/// transport and the device identity (the device ID may be unreadable before first unlock),
+/// and the outbox is a shared ``HubOutbox`` the inner service fills.
+public actor LocalNetworkSyncService: BatterySyncing {
+    /// R2: a report never waits longer than this for the send.
+    public static let sendLimit: Duration = .seconds(5)
+    /// R7: `GET /v1/snapshot?wait=25`.
+    public static let liveWait: Duration = .seconds(25)
+    /// R7: waits after a failed long-poll: 5 s, 15 s, then 60 s (cap).
+    public static let liveBackoff: [Duration] = [.seconds(5), .seconds(15), .seconds(60)]
+    /// NET-003 Design: the ETag is kept in memory and in App Group `UserDefaults`.
+    public static let etagKey = "net.etag"
+
+    private static let logger = Logger(subsystem: LevelsLog.subsystem, category: "hub")
+
+    private let local: LocalOnlySyncService
+    private let outbox: HubOutbox
+    private let transport: any HubTransport
+    private let pairing: any ClientPairingStore
+    private let identity: any DeviceIdentityProviding
+    private let cache: SnapshotCache
+    private let etagSuite: String?
+    private let persistsETag: Bool
+    private let now: @Sendable () -> Date
+    private let sleep: @Sendable (Duration) async throws -> Void
+    private let onChange: @Sendable () -> Void
+    /// Push (ADR-0023, PUSH-001 R72): this iPhone's tokens and relay grants. `nil` = push off
+    /// (`LEVELS_PUSH_ENABLED = NO`): `GET /v1/push-key` and `PUT /v1/push-tokens` are never sent.
+    private let push: (any PushRegistrationSource)?
+    /// The last own reading the Mac accepted (App Group, shared with the widget).
+    private let uploaded: UploadedReadingMemory
+    /// A fresh read of this iPhone's own record (`UIDevice` in the app), or `nil` when it
+    /// can't be read. Each refresh and long-poll round reads it, so a path that reaches the
+    /// Mac without a report first still sends a changed or 5-minute-old reading.
+    private let ownRecord: (@Sendable () async -> DeviceBattery?)?
+
+    private var client: HubClient?
+    /// The tokens (and the Mac key their grant names) the Mac acknowledged on this connection;
+    /// `nil` = not sent since the last (re)connect, so the next good contact sends them.
+    private var pushRegistered: (tokens: [PushToken], macKey: String)?
+    /// Last `GET /v1/push-key`; asked again after ``pushKeyCheckInterval`` (R16, R72).
+    private var pushKeyCheckedAt: Date?
+    /// The Mac refused our grant (400): the next one must be new, not cached.
+    private var pushForceNewGrant = false
+    /// The Mac answered 404/405 (older build or push off): stop asking until the next pairing.
+    private var pushRouteMissing = false
+    /// How often a connected iPhone asks the Mac whether it needs a new grant.
+    static let pushKeyCheckInterval: TimeInterval = 15 * 60
+    private var etag: String?
+    private var lastFetchAt: Date?
+    private var currentStatus: SyncStatus = .localOnly
+    private var liveTask: Task<Void, Never>?
+    private var liveGeneration = 0
+    private var statusContinuations: [UUID: AsyncStream<SyncStatus>.Continuation] = [:]
+
+    /// - Parameters:
+    ///   - local: the inner service; build it with `onOwnWrite: { outbox.put($0) }`.
+    ///   - transport: ``NWHubTransport`` in the app; a loopback or fake one in tests.
+    ///   - etagSuite: the `UserDefaults` suite for `net.etag`; `persistsETag: false` keeps it in memory only.
+    ///   - onChange: called when the cache's devices or status changed (the UI reloads).
+    public init<C: Clock<Duration>>(local: LocalOnlySyncService, outbox: HubOutbox, transport: any HubTransport,
+                                    pairing: any ClientPairingStore, identity: any DeviceIdentityProviding,
+                                    cache: SnapshotCache, etagSuite: String? = nil, persistsETag: Bool = true,
+                                    now: @escaping @Sendable () -> Date = Date.init, clock: C = ContinuousClock(),
+                                    onChange: @escaping @Sendable () -> Void = {},
+                                    push: (any PushRegistrationSource)? = nil,
+                                    uploaded: UploadedReadingMemory = .inMemory(),
+                                    ownRecord: (@Sendable () async -> DeviceBattery?)? = nil) {
+        self.push = push
+        self.uploaded = uploaded
+        self.ownRecord = ownRecord
+        self.local = local
+        self.outbox = outbox
+        self.transport = transport
+        self.pairing = pairing
+        self.identity = identity
+        self.cache = cache
+        self.etagSuite = etagSuite
+        self.persistsETag = persistsETag
+        self.now = now
+        self.sleep = { try await clock.sleep(for: $0) }
+        self.onChange = onChange
+        if persistsETag {
+            etag = UserDefaults(suiteName: etagSuite)?.string(forKey: Self.etagKey)
+        }
+    }
+
+    // MARK: BatterySyncing
+
+    /// R9.
+    public var status: SyncStatus { currentStatus }
+
+    /// Whether a Mac pairing is stored.
+    public var isPaired: Bool { pairing.current() != nil }
+
+    /// The stored pairing (Settings ▸ Mac, NET-004 R7).
+    public var currentPairing: HubPairing? { pairing.current() }
+
+    /// The last good contact with the Mac (`SnapshotFile.lastFetchAt`).
+    public var lastContactAt: Date? { lastFetchAt }
+
+    /// R2: the inner service writes first; the outbox is then sent if the Mac is paired. The
+    /// send never holds the report for more than ``sendLimit``.
+    ///
+    /// The own reading also goes to the outbox when ``ReadingUploadPolicy`` says the Mac needs
+    /// it, whatever the cache write did: the cache holds level changes for up to 60 s and
+    /// skips unchanged readings, and before this a held or skipped write was never sent.
+    public func report(_ readings: [DeviceBattery], reason: ReportReason) async -> ReportOutcome {
+        let outcome = await local.report(readings, reason: reason)
+        if let own = readings.first(where: { $0.kind != .accessory }) { queueIfNeeded(own) }
+        if outbox.value != nil, isPaired {
+            await Self.runLimited(Self.sendLimit, sleep: sleep) { await self.sendOutbox() }
+        }
+        return outcome
+    }
+
+    /// R3, R5, R9: sends the outbox, then fetches the snapshot with the last ETag.
+    @discardableResult
+    public func refresh(_ reason: RefreshReason) async -> Bool {
+        guard let client = clientIfReady() else {
+            if !isPaired { await setStatus(.notPaired) }
+            return await cacheReadable()
+        }
+        await queueFreshOwnReading()
+        if outbox.value != nil, let error = await sendOutbox(), Self.isUnreachable(error) {
+            return await cacheReadable()
+        }
+        do {
+            let fetch = try await client.snapshot(ifNoneMatch: etag, wait: nil)
+            await handle(fetch)
+            await syncPushTokens()
+        } catch {
+            await apply(error)
+        }
+        return await cacheReadable()
+    }
+
+    /// Fires a held widget reload now (``LocalOnlySyncService/flushWidgetReload()``).
+    public func flushWidgetReload() async { await local.flushWidgetReload() }
+
+    // MARK: Lifecycle
+
+    /// Launch: reads `lastFetchAt` from the cache and records the starting status
+    /// (`.notPaired` when no pairing is stored). Replaces ``LocalOnlySyncService/start()``.
+    public func start() async {
+        let cache = cache
+        let file = await Task.detached(priority: .utility) { cache.read() }.value
+        lastFetchAt = file?.lastFetchAt
+        // A cache that holds nothing from the Mac must not be answered with 304.
+        if file?.devices.contains(where: { $0.id != file?.ownDeviceID }) != true { setETag(nil) }
+        if !isPaired {
+            await setStatus(.notPaired)
+        } else {
+            let cached = file?.syncStatus
+            await setStatus(cached == nil || cached == .notPaired ? .localOnly : cached!)
+        }
+    }
+
+    /// R7: one long-poll loop while the scene is active and the iPhone is paired.
+    public func startLiveUpdates() {
+        guard liveTask == nil, isPaired else { return }
+        liveGeneration += 1
+        let generation = liveGeneration
+        liveTask = Task { await self.liveLoop(generation: generation) }
+        Self.logger.notice("Live updates started")
+    }
+
+    /// R7: cancels the loop and drops the kept-alive connection (no background connection).
+    public func stopLiveUpdates() async {
+        guard let task = liveTask else { return }
+        liveTask = nil
+        liveGeneration += 1
+        task.cancel()
+        if let nw = transport as? NWHubTransport { await nw.reset() }
+        resetPushState()  // a new connection resends them
+        Self.logger.notice("Live updates stopped")
+    }
+
+    /// Updates for the UI (NET-003 Design `statusUpdates()`); yields the current status first.
+    public func statusUpdates() -> AsyncStream<SyncStatus> {
+        let (stream, continuation) = AsyncStream<SyncStatus>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let id = UUID()
+        statusContinuations[id] = continuation
+        continuation.yield(currentStatus)
+        continuation.onTermination = { [weak self] _ in Task { await self?.dropContinuation(id) } }
+        return stream
+    }
+
+    // MARK: Pairing (NET-002 R7, R9)
+
+    /// After the UI saved a new pairing: drop the old connection and ETag, then fetch.
+    public func didPair() async {
+        await stopLiveUpdates()
+        if let nw = transport as? NWHubTransport { await nw.reset() }
+        setETag(nil)
+        resetPushState()
+        pushRouteMissing = false
+        uploaded.clear()  // a new Mac has none of our readings
+        await refresh(.userPull)
+    }
+
+    /// NET-002 R9 "Forget this Mac": `DELETE /v1/pairing` (best effort), delete the item,
+    /// status `.notPaired`. Records from the Mac stay in the cache.
+    public func forget() async {
+        await stopLiveUpdates()
+        if let client = clientIfReady() {
+            await client.forget()
+        } else {
+            do { try pairing.remove() } catch {
+                Self.logger.error("Forget: Keychain delete failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+        outbox.clear()
+        uploaded.clear()
+        setETag(nil)
+        resetPushState()
+        await setStatus(.notPaired)
+    }
+
+    // MARK: Remove all my data (R10, lead's call 28)
+
+    /// Paired: `DELETE /v1/devices/me` first; only after `204` the local reset. Not
+    /// reachable: throws the ``HubError`` and nothing changes. Not paired: local reset only.
+    public func removeAllData() async throws {
+        if isPaired {
+            guard let client = clientIfReady() else { throw HubError.notPaired }
+            do {
+                try await client.deleteMe()
+            } catch {
+                Self.logger.notice("Remove all data: Mac not reachable (\(String(describing: error), privacy: .public))")
+                throw error
+            }
+        }
+        try await local.removeAllData()
+        outbox.clear()
+        uploaded.clear()
+        setETag(nil)
+        onChange()
+    }
+
+    /// R10: reporting on again; the status is written back to the cache.
+    public func resumeReporting() async {
+        await local.resumeReporting()
+        await local.setStatus(currentStatus, lastFetchAt: lastFetchAt)
+    }
+
+    // MARK: Internals
+
+    private func clientIfReady() -> HubClient? {
+        guard isPaired else { return nil }
+        if let client { return client }
+        let me: DeviceID?
+        do { me = try identity.currentDeviceID() } catch {
+            Self.logger.error("Device ID unreadable: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+        guard let me else { return nil }
+        let made = HubClient(transport: transport, pairing: pairing, me: me)
+        client = made
+        return made
+    }
+
+    /// Puts `own` in the outbox when the Mac needs it (``ReadingUploadPolicy``) and it is newer
+    /// than what the outbox holds. Nothing while reporting is off (SYNC-001 R15a).
+    private func queueIfNeeded(_ own: DeviceBattery) {
+        guard local.isReportingEnabled,
+              ReadingUploadPolicy.shouldUpload(own, last: uploaded.load(), now: now()) else { return }
+        if let queued = outbox.value, queued.id == own.id, queued.updatedAt >= own.updatedAt { return }
+        outbox.put(own)
+    }
+
+    /// Reads this iPhone's battery now (``ownRecord``) and queues it when the Mac needs it.
+    private func queueFreshOwnReading() async {
+        guard let ownRecord, local.isReportingEnabled, let own = await ownRecord() else { return }
+        queueIfNeeded(own)
+    }
+
+    /// R4. Returns the error when the send failed (the slot is kept), `nil` otherwise. A
+    /// queued copy of what the Mac already has is dropped unsent.
+    @discardableResult
+    private func sendOutbox() async -> HubError? {
+        guard let record = outbox.value, let client = clientIfReady() else { return nil }
+        if ReadingUploadPolicy.isAlreadyUploaded(record, last: uploaded.load()) {
+            outbox.clear(ifStill: record)
+            return nil
+        }
+        do {
+            try await client.post(record)
+            uploaded.record(record, at: now())
+            Self.logger.notice("POST /v1/readings level=\(record.level.map(String.init) ?? "none", privacy: .public) accepted")
+            outbox.clear(ifStill: record)
+            if Self.isUnreachableStatus(currentStatus) { await setStatus(.localOnly) }
+            return nil
+        } catch .badResponse(403) {
+            Self.logger.fault("POST /v1/readings refused (403) for \(record.id.recordName, privacy: .public); dropped")
+            outbox.clear(ifStill: record)
+            return nil
+        } catch {
+            await apply(error)
+            return error
+        }
+    }
+
+    private func resetPushState() {
+        pushRegistered = nil
+        pushKeyCheckedAt = nil
+    }
+
+    /// Push (R72): after a good contact, when the tokens changed, on each new connection, and
+    /// every ``pushKeyCheckInterval``: asks the Mac for its key and grant state, gets a grant
+    /// for this iPhone's tokens from the relay when needed (cached otherwise), and sends both
+    /// to the Mac. A failure is retried at a later contact.
+    private func syncPushTokens() async {
+        guard let push, !pushRouteMissing, let client = clientIfReady() else { return }
+        let t = now()
+        let tokens = await push.tokens()
+        let changed = pushRegistered.map { $0.tokens != tokens } ?? true
+        let due = pushKeyCheckedAt.map { t.timeIntervalSince($0) >= Self.pushKeyCheckInterval } ?? true
+        guard changed || due else { return }
+        if pushRegistered == nil, tokens.isEmpty {  // nothing to tell the Mac yet
+            pushKeyCheckedAt = t
+            return
+        }
+        let answer: PushKeyAnswer
+        do {
+            guard let a = try await client.pushKey() else {
+                pushRouteMissing = true
+                Self.logger.notice("The Mac doesn't take push grants (older build or push off)")
+                return
+            }
+            answer = a
+        } catch {
+            Self.logger.notice("Push key not read: \(String(describing: error), privacy: .public)")
+            return
+        }
+        pushKeyCheckedAt = t
+        let upload: PushTokenUpload
+        if tokens.isEmpty {
+            upload = PushTokenUpload(tokens: [])  // no widget left: the Mac stops pushing
+        } else {
+            guard changed || answer.macKey != pushRegistered?.macKey || answer.grant != .ok else { return }
+            guard let grant = await push.grant(for: tokens, macKey: answer.macKey,
+                                               forceNew: answer.grant == .renew || pushForceNewGrant)
+            else { return }  // no App Attest, relay down: try again later
+            upload = PushTokenUpload(tokens: tokens, grant: grant.grant, grantExpiresAt: grant.expiresAt)
+        }
+        do {
+            if try await client.putPushTokens(upload) {
+                pushRegistered = (tokens, answer.macKey)
+                pushForceNewGrant = false
+                Self.logger.notice("Push tokens sent to the Mac (\(tokens.count, privacy: .public))")
+            } else {
+                pushRouteMissing = true
+                Self.logger.notice("The Mac doesn't take push tokens (older build)")
+            }
+        } catch .badResponse(400) {
+            pushForceNewGrant = true  // the grant doesn't match this Mac: get a new one next time
+            pushKeyCheckedAt = nil
+            Self.logger.notice("The Mac refused the push grant; a new one follows")
+        } catch {
+            Self.logger.notice("Push tokens not sent: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    private func handle(_ fetch: HubFetch) async {
+        let t = now()
+        var changed = false
+        switch fetch {
+        case .changed(let snapshot, let tag):
+            let me = (try? identity.currentDeviceID()).flatMap { $0 }
+            changed = await local.ingest(snapshot.devices, replacingAllExcept: Set([me].compactMap { $0 }))
+            setETag(tag)
+        case .notModified(let tag):
+            if !tag.isEmpty { setETag(tag) }
+        }
+        lastFetchAt = t
+        await setStatus(.localOnly, lastFetchAt: t)
+        if changed { onChange() }
+    }
+
+    /// R9 table.
+    private func apply(_ error: HubError) async {
+        if Self.isUnreachable(error) { resetPushState() }  // resend after the next connect
+        let status: SyncStatus
+        switch error {
+        case .notPaired: status = .notPaired
+        case .notFound, .notReady, .timedOut: status = .awayFromHub(lastContactAt: lastFetchAt)
+        case .handshakeRefused: status = .misconfigured(code: 401)
+        case .localNetworkDenied: status = .restricted
+        case .versionMismatch: status = .misconfigured(code: 426)
+        case .badResponse(let code) where code == 401 || code == 426: status = .misconfigured(code: code)
+        case .badResponse(let code):
+            Self.logger.error("Hub answered \(code, privacy: .public); status kept")
+            return
+        }
+        await setStatus(status)
+    }
+
+    private func setStatus(_ status: SyncStatus, lastFetchAt: Date? = nil) async {
+        let changed = status != currentStatus
+        if changed {
+            Self.logger.notice("Hub status \(String(describing: status), privacy: .public)")
+        }
+        currentStatus = status
+        await local.setStatus(status, lastFetchAt: lastFetchAt)
+        if changed {
+            for c in statusContinuations.values { c.yield(status) }
+            onChange()
+        }
+    }
+
+    private func setETag(_ tag: String?) {
+        etag = tag
+        guard persistsETag, let defaults = UserDefaults(suiteName: etagSuite) else { return }
+        if let tag { defaults.set(tag, forKey: Self.etagKey) } else { defaults.removeObject(forKey: Self.etagKey) }
+    }
+
+    private func dropContinuation(_ id: UUID) { statusContinuations[id] = nil }
+
+    private func cacheReadable() async -> Bool {
+        let cache = cache
+        return await Task.detached(priority: .utility) { cache.read() != nil }.value
+    }
+
+    private func liveLoop(generation: Int) async {
+        var failures = 0
+        while !Task.isCancelled, generation == liveGeneration {
+            guard let client = clientIfReady() else { return }
+            await queueFreshOwnReading()
+            if outbox.value != nil { await sendOutbox() }
+            do {
+                let fetch = try await client.snapshot(ifNoneMatch: etag, wait: Self.liveWait)
+                guard !Task.isCancelled, generation == liveGeneration else { return }
+                await handle(fetch)
+                await syncPushTokens()
+                failures = 0
+            } catch {
+                guard !Task.isCancelled, generation == liveGeneration else { return }
+                await apply(error)
+                let wait = Self.liveBackoff[min(failures, Self.liveBackoff.count - 1)]
+                failures += 1
+                do { try await sleep(wait) } catch { return }
+            }
+        }
+    }
+
+    static func isUnreachable(_ error: HubError) -> Bool {
+        switch error {
+        case .notFound, .notReady, .timedOut, .localNetworkDenied, .handshakeRefused, .versionMismatch, .notPaired: true
+        case .badResponse: false
+        }
+    }
+
+    static func isUnreachableStatus(_ status: SyncStatus) -> Bool {
+        if case .awayFromHub = status { return true }
+        return false
+    }
+
+    /// Runs `work`; returns when it finishes or after `limit`, whichever comes first. The
+    /// work keeps running after the limit (its result lands in the outbox and status).
+    static func runLimited(_ limit: Duration, sleep: @escaping @Sendable (Duration) async throws -> Void,
+                           _ work: @escaping @Sendable () async -> Void) async {
+        let done = OnceFlag()
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let finish: @Sendable () -> Void = { if done.claim() { c.resume() } }
+            Task { await work(); finish() }
+            Task { try? await sleep(limit); finish() }
+        }
+    }
+}
+
+/// True for the first ``claim()`` only.
+final class OnceFlag: Sendable {
+    private let done = Mutex(false)
+    func claim() -> Bool { done.withLock { d in defer { d = true }; return !d } }
+}

@@ -1,0 +1,15 @@
+{
+  "SPBluetoothDataType" : [
+    {
+      "controller_properties" : { "controller_address" : "00:11:22:33:44:00", "controller_state" : "attrib_on" },
+      "device_connected" : [
+        { "Beats Flex" : { "device_address" : "00:11:22:33:44:10", "device_batteryLevelMain" : "70%", "device_minorType" : "Headphones", "device_vendorID" : "0x004C" } },
+        { "Logi Mouse" : { "device_address" : "00:11:22:33:44:11", "device_batteryLevelMain" : "55%", "device_minorType" : "Mouse", "device_vendorID" : "0x046D" } },
+        { "No Address Pods" : { "device_batteryLevelLeft" : "50%", "device_minorType" : "Headphones", "device_vendorID" : "0x004C" } },
+        { "Bad Value Pods" : { "device_address" : "00:11:22:33:44:12", "device_batteryLevelLeft" : "50", "device_batteryLevelRight" : "60%", "device_minorType" : "Headphones", "device_vendorID" : "0x004C" } },
+        { "Future Pods" : { "device_address" : "00:11:22:33:44:13", "device_batteryLevelLeftBud" : "50%", "device_minorType" : "Headphones", "device_vendorID" : "0x004C" } },
+        { "Speaker" : { "device_address" : "00:11:22:33:44:14", "device_minorType" : "Speaker" } }
+      ]
+    }
+  ]
+}

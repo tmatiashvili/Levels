@@ -1,0 +1,21 @@
+// Levels-Watch: watchOS app, companion of Levels-iOS, runs on its own (ADR-0003, ADR-0012).
+#include "Levels.xcconfig"
+
+SDKROOT = watchos
+SUPPORTED_PLATFORMS = watchos watchsimulator
+TARGETED_DEVICE_FAMILY = 4
+
+PRODUCT_NAME = Levels
+// Must start with the iOS app's bundle ID (ADR-0003 §5).
+PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels.watchkitapp
+INFOPLIST_FILE = Levels-Watch/Info.plist
+INFOPLIST_KEY_CFBundleDisplayName = Levels
+
+// One file for Debug and Release (lead's call 14): aps-environment is
+// `development`; exporting for TestFlight, App Store or Developer ID rewrites
+// it to `production`.
+CODE_SIGN_ENTITLEMENTS = Levels-Watch/Levels-Watch.entitlements
+
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+SKIP_INSTALL = YES

@@ -1,0 +1,24 @@
+// Widgets-Mac: macOS widget extension, embedded in Levels-Mac (UI-004).
+// Links LevelsModel, LevelsUI, LevelsWidgetKit only (ADR-0003 §3).
+#include "Levels.xcconfig"
+
+SDKROOT = macosx
+SUPPORTED_PLATFORMS = macosx
+
+PRODUCT_NAME = LevelsWidgets
+PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels.widgets
+INFOPLIST_FILE = Widgets-Mac/Info.plist
+INFOPLIST_KEY_CFBundleDisplayName = Levels Widgets
+
+CODE_SIGN_ENTITLEMENTS = Widgets-Mac/Widgets-Mac.entitlements
+
+// Extensions are always sandboxed (SYNC-001 entitlements table). The widget
+// never fetches (decision 1), so no outgoing network.
+ENABLE_HARDENED_RUNTIME = YES
+ENABLE_APP_SANDBOX = YES
+ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO
+ENABLE_USER_SELECTED_FILES =
+
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks
+SKIP_INSTALL = YES
+APPLICATION_EXTENSION_API_ONLY = YES

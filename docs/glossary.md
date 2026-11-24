@@ -35,6 +35,9 @@ Short definitions of terms used across the README, ADRs and specs. When a docume
 | **Discharge cycle** | The time from one charge to the next. Low-battery alerts fire at most once per cycle per device. [ALR-001] |
 | **Threshold** | The level (default 20%) below which a device triggers a low-battery alert. Set per device. [ALR-001] |
 | **History** | The last 7 days of readings for a device, used for charts. [HIS-001] |
+| **Hub (Mac hub)** | Free-team setup (owner decision M): the Mac app serves the levels it holds on the home Wi-Fi, and the iPhone reads them and sends its own reading back. Same network only. [ADR-0020, NET-001] |
+| **Pairing** | A one-time step: the Mac shows a 6-digit code, the iPhone types it, and both keep a shared key for every later request. [NET-002] |
+| **Away from Mac** | The iPhone can't reach its paired Mac (another network, Mac asleep or off). Rows keep their last levels and age honestly. [NET-003 R5, NET-004 R4] |
 | **Nearby mode** | Optional, later: Mac sends its battery to a nearby iPhone over Bluetooth LE, without iCloud. [NRB-001] |
 | **Owner / participant** | In family sharing, the owner shares their devices; participants are invited people who can see them. [FAM-001] |
 | **Development / Production environment** | CloudKit's two copies of the database. Every Levels build used day to day, Xcode debug builds included, uses Production; experiments use a separate container or test setup. Schema must be deployed before Production works. Separate from the push environment (`aps-environment`): `development` in Debug builds, `production` in TestFlight, release and Developer ID builds; SPIKE-001 checks Debug builds still get pushes. [ADR-0005, ADR-0018, SPIKE-001] |

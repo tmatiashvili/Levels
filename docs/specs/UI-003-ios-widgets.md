@@ -10,6 +10,8 @@ targets: [Shared, Widgets-iOS]
 
 # UI-003: iPhone and iPad widgets
 
+> **Note (owner decision M, 2026-11-24):** in the free-team hub build, [NET-004](NET-004-iphone-app-and-widgets-local.md) R12–R15 change the empty states, add an "Away from Mac" footer, and pick how the widget gets data: variant A reads the App Group cache as this spec says; variant B fetches from the Mac in `getTimeline` (pending the free-team probe, lead's call 23). Everything else here applies as written.
+
 ## Why
 
 The point of Levels is not having to open anything: a glance at the Home Screen, Lock Screen or StandBy should answer "is my MacBook charged?".
@@ -73,7 +75,7 @@ accessoryCircular   accessoryRectangular            accessoryInline
   - `SelectDeviceIntent: WidgetConfigurationIntent`.
   - Family views: `SmallDeviceView`, `MediumDevicesView`, `LargeDevicesView`, `CircularDeviceView`, `RectangularDevicesView`, `InlineDeviceView`, each taking an entry; all with previews for every state.
 - `Widgets-iOS` target: `@main struct LevelsWidgets: WidgetBundle` with `LevelsDevicesWidget` (kind `"LevelsDevices"`), `.supportedFamilies([...R3])`, `.configurationDisplayName("Battery Levels")`, `.description("See the battery of all your devices.")`.
-- Entitlement: App Group only (no iCloud). Lead's call (2026-11-23): widgets read the App Group cache only and never fetch from iCloud (ADR-0006, SYNC-001 R14). Links `LevelsModel`, `LevelsUI`, `LevelsWidgetKit`; never `LevelsSync`/`LevelsReaders` (ADR-0003).
+- Entitlements: App Group and the keychain access group (ADR-0007, SYNC-001 entitlements); no iCloud, no push. Lead's call (2026-11-23): widgets read the App Group cache only and never fetch from iCloud (ADR-0006, SYNC-001 R14). Links `LevelsModel`, `LevelsUI`, `LevelsWidgetKit`; never `LevelsSync`/`LevelsReaders` (ADR-0003).
 - Placeholder/snapshot: `placeholder(in:)` returns a redacted sample of three devices; the gallery snapshot uses sample data, not the cache.
 - **Builder's call:** truncating names in medium widgets (first word vs character limit).
 
