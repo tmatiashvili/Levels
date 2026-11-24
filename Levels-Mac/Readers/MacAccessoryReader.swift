@@ -135,9 +135,11 @@ struct MacAccessoryReader: AccessoryBatteryReader {
 }
 
 /// IOBluetooth connect and disconnect for any device (MAC-003 triggers). Registered on the
-/// main thread, so callbacks arrive on the main run loop. Connect callbacks for devices that
-/// were already connected (IOBluetooth replays them right after registering) only arm the
-/// disconnect notification: the launch scan already read them.
+/// main thread, but IOBluetooth may still call back on its own `coordinatorQueue`: the `@objc`
+/// callbacks are `nonisolated` and hop to the main actor (a main-actor callback there trapped
+/// in Swift 6's isolation check and quit the app, 2026-11-24). Connect callbacks for devices
+/// that were already connected (IOBluetooth replays them right after registering) only arm
+/// the disconnect notification: the launch scan already read them.
 @MainActor private final class BluetoothConnectNotifications: NSObject {
     private let continuation: AsyncStream<AccessoryChange>.Continuation
     private var connectNotification: IOBluetoothUserNotification?
@@ -156,23 +158,44 @@ struct MacAccessoryReader: AccessoryBatteryReader {
         }
     }
 
-    @objc private func connected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+    @objc private nonisolated func connected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        let at = Date()
+        let device = UncheckedSendable(device)
+        Self.onMain { self.didConnect(device.value, at: at) }
+    }
+
+    @objc private nonisolated func disconnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        let objects = UncheckedSendable((notification, device))
+        Self.onMain { self.didDisconnect(objects.value.0, device: objects.value.1) }
+    }
+
+    private func didConnect(_ device: IOBluetoothDevice, at: Date) {
         guard !cancelled else { return }
         let key = device.addressString ?? ObjectIdentifier(device).debugDescription
         if disconnectNotifications[key] == nil {
             disconnectNotifications[key] = device.register(forDisconnectNotification: self,
                                                            selector: #selector(disconnected(_:device:)))
         }
-        guard Date().timeIntervalSince(registeredAt) > 2 else { return }  // replay of an existing connection
+        guard at.timeIntervalSince(registeredAt) > 2 else { return }  // replay of an existing connection
         continuation.yield(.bluetoothConnected)
     }
 
-    @objc private func disconnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+    private func didDisconnect(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         notification.unregister()
         let key = device.addressString ?? ObjectIdentifier(device).debugDescription
         disconnectNotifications[key] = nil
         guard !cancelled else { return }
         continuation.yield(.bluetoothDisconnected)
+    }
+
+    /// Runs `work` on the main actor: at once when IOBluetooth called on the main thread,
+    /// else on the main queue.
+    private nonisolated static func onMain(_ work: @escaping @MainActor @Sendable () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { work() }
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated { work() } }
+        }
     }
 
     func cancel() {
@@ -183,6 +206,12 @@ struct MacAccessoryReader: AccessoryBatteryReader {
         for notification in disconnectNotifications.values { notification.unregister() }
         disconnectNotifications = [:]
     }
+}
+
+/// IOBluetooth objects passed from its callback queue to the main actor, which alone uses them.
+private struct UncheckedSendable<Value>: @unchecked Sendable {
+    let value: Value
+    init(_ value: Value) { self.value = value }
 }
 
 #if LEVELS_UNSANDBOXED

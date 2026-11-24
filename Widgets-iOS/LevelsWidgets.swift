@@ -9,6 +9,7 @@ import LevelsModel
 import LevelsUI
 import LevelsWidgetKit
 import SwiftUI
+import UIKit
 import WidgetKit
 
 @main
@@ -27,7 +28,8 @@ struct PhoneDevicesWidget: Widget {
 
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: LevelsDevicesWidget.kind, intent: SelectDeviceIntent.self,
-                               provider: DevicesProvider(fetch: WidgetHubFetch.make())) { entry in
+                               provider: DevicesProvider(fetch: WidgetHubFetch.make(),
+                                                         readOwn: WidgetOwnBattery.read)) { entry in
             PhoneWidgetView(entry: entry)
         }
         .configurationDisplayName(Text("Battery Levels"))
@@ -54,6 +56,29 @@ struct PhoneWidgetView: View {
         default:
             DevicesWidgetView(entry: entry)  // small, medium, large and their empty state
                 .containerBackground(.fill.tertiary, for: .widget)  // UI-003 R10
+        }
+    }
+}
+
+/// This iPhone's battery, read by the widget itself at each timeline load: the app writes its
+/// own record only while it runs, so without this the iPhone row kept the app's last reading.
+enum WidgetOwnBattery {
+    @Sendable static func read() async -> OwnBatteryReading? {
+        await MainActor.run {
+            let device = UIDevice.current
+            if !device.isBatteryMonitoringEnabled { device.isBatteryMonitoringEnabled = true }
+            let state: OwnBatteryReading.State = switch device.batteryState {
+            case .unplugged: .unplugged
+            case .charging: .charging
+            case .full: .full
+            case .unknown: .unknown
+            @unknown default: .unknown
+            }
+            let reading = OwnBatteryReading(level: OwnBatteryReading.level(fromFraction: Double(device.batteryLevel)),
+                                            state: state, isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                                            readAt: Date())
+            WidgetHubFetch.logger.notice("Widget: own battery \(reading.level.map(String.init) ?? "unknown", privacy: .public)")
+            return reading
         }
     }
 }

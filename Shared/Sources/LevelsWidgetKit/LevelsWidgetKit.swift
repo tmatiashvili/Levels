@@ -163,8 +163,13 @@ public enum HubWidgetPlan {
 /// With a `fetch` (iPhone variant B) it may also ask the Mac when the cache is old.
 public struct DevicesProvider: AppIntentTimelineProvider {
     let fetch: HubWidgetPlan.Fetch?
+    /// iPhone: the widget's own `UIDevice` read of this iPhone, laid over the cached own record.
+    let readOwn: OwnBatteryReading.Read?
 
-    public init(fetch: HubWidgetPlan.Fetch? = nil) { self.fetch = fetch }
+    public init(fetch: HubWidgetPlan.Fetch? = nil, readOwn: OwnBatteryReading.Read? = nil) {
+        self.fetch = fetch
+        self.readOwn = readOwn
+    }
 
     static func cached() -> (SnapshotFile?, DisplayPreferences) {
         let group = LevelsAppConfig.appGroupID
@@ -200,13 +205,23 @@ public struct DevicesProvider: AppIntentTimelineProvider {
             return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
         }
         let (cached, prefs) = Self.cached()
+        return await Self.hubTimeline(cached: cached, preferences: prefs, now: now, selection: selection, fetch: fetch,
+                                      own: await readOwn?())
+    }
+
+    /// The iPhone timeline (variant B): the plan's snapshot with this iPhone's own live reading
+    /// laid over it, entries up to the plan's reload. Pure apart from `fetch`; unit-tested.
+    static func hubTimeline(cached: SnapshotFile?, preferences prefs: DisplayPreferences, now: Date,
+                            selection: DeviceID?, fetch: @escaping HubWidgetPlan.Fetch,
+                            own: OwnBatteryReading?) async -> Timeline<DeviceEntry> {
         let plan = await HubWidgetPlan.resolve(cached: cached, now: now, fetch: fetch)
-        var entries = DevicesTimeline.entries(snapshot: plan.snapshot, preferences: prefs, now: now, selection: selection)
+        let snapshot = plan.snapshot?.overlaying(own: own)
+        var entries = DevicesTimeline.entries(snapshot: snapshot, preferences: prefs, now: now, selection: selection)
         guard let reloadAt = plan.reloadAt else {
             return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
         }
         entries = entries.filter { $0.date < reloadAt }  // ADR-0017 stale entries before the reload
-        return Timeline(entries: entries.isEmpty ? [DeviceEntry(date: now, snapshot: plan.snapshot, preferences: prefs,
+        return Timeline(entries: entries.isEmpty ? [DeviceEntry(date: now, snapshot: snapshot, preferences: prefs,
                                                                 selection: selection)] : entries,
                         policy: .after(reloadAt))
     }
