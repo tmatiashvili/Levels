@@ -2,6 +2,9 @@
 // (Liquid Glass review 2026-11-24). Xcode previews and `ImageRenderer` don't draw the widget
 // host, so the gallery sets `widgetRenderingMode` itself; the snapshot test in
 // LevelsWidgetKitTests also imitates what the host then does to the pixels.
+// Debug only (release readiness 2026-11-24): sample data and the gallery are for previews and
+// the snapshot test (`swift test` builds Debug); they are not compiled into Release widgets.
+#if DEBUG
 import Foundation
 import LevelsModel
 import LevelsUI
@@ -123,3 +126,4 @@ struct WidgetModeGallery: View {
 #Preview("Full colour") { ScrollView { WidgetModeGallery(mode: .fullColor) } }
 #Preview("Accented (tinted, clear)") { ScrollView { WidgetModeGallery(mode: .accented) }.preferredColorScheme(.dark) }
 #Preview("Vibrant (Lock Screen, StandBy)") { ScrollView { WidgetModeGallery(mode: .vibrant) }.preferredColorScheme(.dark) }
+#endif

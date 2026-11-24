@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Privacy manifest (release readiness 2026-11-24, docs/release-checklist.md).
+  Levels has no analytics, no ads, no third-party SDKs and no server of its
+  own: battery readings stay on the owner's devices (App Group cache, Keychain)
+  and travel only between the owner's iPhone and Mac on the local network.
+  Nothing is "collected" in App Store terms, so the data-types list is empty.
+  Required-reason APIs: UserDefaults (App Group suite shared by the app and
+  its widget, plus the app's own standard defaults). The Shared package is
+  first-party code linked statically into this bundle, so this file covers it.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

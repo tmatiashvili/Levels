@@ -8,7 +8,7 @@
 // Liquid Glass"): accented (tinted and clear Home Screen, Mac desktop behind windows) keeps
 // only each pixel's opacity and paints it one colour; vibrant (Lock Screen, StandBy at night)
 // keeps only luminance. Good enough to catch content that vanishes or merges in those styles.
-#if os(macOS)
+#if os(macOS) && DEBUG  // the gallery is Debug-only (WidgetRenderGallery.swift)
 import AppKit
 import ImageIO
 import SwiftUI

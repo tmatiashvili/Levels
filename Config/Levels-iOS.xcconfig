@@ -25,3 +25,12 @@ CODE_SIGN_ENTITLEMENTS = Levels-iOS/Levels-iOS.entitlements
 
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+
+// Release readiness (2026-11-24): App Store metadata keys.
+// Export compliance: the app's only encryption is Apple's (TLS 1.3 PSK through
+// Network.framework, CryptoKit X25519 + HKDF to derive the pairing key, the
+// Keychain), used to authenticate and protect the link to the owner's own Mac.
+// That is exempt, so App Store Connect stops asking on every upload
+// (docs/release-checklist.md, "Export compliance").
+INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
+INFOPLIST_KEY_LSApplicationCategoryType = public.app-category.utilities
