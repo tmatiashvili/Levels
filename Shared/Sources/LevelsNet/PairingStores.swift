@@ -18,16 +18,59 @@ public protocol HubPairingStore: Sendable {
     func removeAll() throws
     /// Updates `lastSeenAt`, written at most once per 10 minutes.
     func touch(_ id: DeviceID, at: Date)
-    /// Replaces a paired device's push tokens. Returns `false` when the device isn't paired.
-    func setPushTokens(_ tokens: [PushToken], for id: DeviceID) throws -> Bool
+    /// Changes a paired device's push fields (tokens, grant, needs-grant flag) and writes the
+    /// item only when something changed. Returns `false` when the device isn't paired.
+    func updatePush(for id: DeviceID, _ change: (inout PairedClient) -> Void) throws -> Bool
+}
+
+/// A paired device's push state, as the Mac's scheduler reads it.
+public struct PushRegistration: Sendable, Equatable {
+    public var tokens: [PushToken]
+    public var grant: String?
+    public var grantExpiresAt: Date?
+    public var needsGrant: Bool
+
+    public init(tokens: [PushToken], grant: String? = nil, grantExpiresAt: Date? = nil, needsGrant: Bool = false) {
+        self.tokens = tokens
+        self.grant = grant
+        self.grantExpiresAt = grantExpiresAt
+        self.needsGrant = needsGrant
+    }
 }
 
 extension HubPairingStore {
     /// Every paired device's push tokens (devices without any are left out).
-    public func pushTokens() -> [DeviceID: [PushToken]] {
-        var out: [DeviceID: [PushToken]] = [:]
-        for client in all() { if let t = client.pushTokens, !t.isEmpty { out[client.id] = t } }
+    public func pushTokens() -> [DeviceID: [PushToken]] { pushRegistrations().mapValues(\.tokens) }
+
+    /// Every paired device with push tokens.
+    public func pushRegistrations() -> [DeviceID: PushRegistration] {
+        var out: [DeviceID: PushRegistration] = [:]
+        for client in all() { if let r = client.pushRegistration { out[client.id] = r } }
         return out
+    }
+
+    /// Replaces a paired device's push tokens and keeps its grant (used when the relay reports
+    /// some tokens gone). Returns `false` when the device isn't paired.
+    @discardableResult
+    public func setPushTokens(_ tokens: [PushToken], for id: DeviceID) throws -> Bool {
+        try updatePush(for: id) { $0.pushTokens = tokens.isEmpty ? nil : tokens }
+    }
+
+    /// A new upload: tokens and grant together; clears the needs-grant flag.
+    @discardableResult
+    public func setPushRegistration(_ tokens: [PushToken], grant: String?, expiresAt: Int64?, for id: DeviceID) throws -> Bool {
+        try updatePush(for: id) { c in
+            c.pushTokens = tokens.isEmpty ? nil : tokens
+            c.pushGrant = tokens.isEmpty ? nil : grant
+            c.pushGrantExpiresAt = tokens.isEmpty || grant == nil ? nil : expiresAt
+            c.pushNeedsGrant = nil
+        }
+    }
+
+    /// R16, R19: stop pushing to `id` until it sends a new grant.
+    @discardableResult
+    public func setPushNeedsGrant(for id: DeviceID) throws -> Bool {
+        try updatePush(for: id) { $0.pushNeedsGrant = true }
     }
 }
 
@@ -62,10 +105,11 @@ public final class InMemoryHubPairingStore: HubPairingStore {
             c[id] = client
         }
     }
-    public func setPushTokens(_ tokens: [PushToken], for id: DeviceID) throws -> Bool {
+    public func updatePush(for id: DeviceID, _ change: (inout PairedClient) -> Void) throws -> Bool {
         clients.withLock { c in
-            guard c[id] != nil else { return false }
-            c[id]?.pushTokens = tokens.isEmpty ? nil : tokens
+            guard var client = c[id] else { return false }
+            change(&client)
+            c[id] = client
             return true
         }
     }
@@ -253,12 +297,12 @@ public final class KeychainHubPairingStore: HubPairingStore {
         }
     }
 
-    /// Writes only when the set changed (the iPhone sends it on every connect).
-    public func setPushTokens(_ tokens: [PushToken], for id: DeviceID) throws -> Bool {
-        guard var client = try load()[id] else { return false }
-        let new = tokens.isEmpty ? nil : tokens
-        guard client.pushTokens != new else { return true }
-        client.pushTokens = new
+    /// Writes only when something changed (the iPhone sends its tokens on every connect).
+    public func updatePush(for id: DeviceID, _ change: (inout PairedClient) -> Void) throws -> Bool {
+        guard let old = try load()[id] else { return false }
+        var client = old
+        change(&client)
+        guard client != old else { return true }
         try save(client)
         return true
     }

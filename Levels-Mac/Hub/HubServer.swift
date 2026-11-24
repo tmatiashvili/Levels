@@ -54,6 +54,8 @@ import os
     @ObservationIgnored let window: PairingWindow
     @ObservationIgnored private let listener: HubListener
     @ObservationIgnored private let hubIDBox: HubIDBox
+    /// Push (ADR-0023): the Mac's push key and long-poll presence; `nil` = push off.
+    @ObservationIgnored private let push: HubPushSupport?
     /// Backoff, when to show `.failed`, and retry-now on a path change.
     @ObservationIgnored private var retryPolicy = HubRetryPolicy()
     @ObservationIgnored private var retryTask: Task<Void, Never>?
@@ -64,7 +66,8 @@ import os
 
     init(local: LocalOnlySyncService, cache: SnapshotCache, reporting: ReportingSetting, defaults: UserDefaults,
          identity: any DeviceIdentityProviding, signal: HubChangeSignal, onChange: @escaping @Sendable () -> Void,
-         hubName: @escaping @Sendable () -> String) {
+         hubName: @escaping @Sendable () -> String, push: HubPushSupport? = nil) {
+        self.push = push
         self.defaults = defaults
         self.reporting = reporting
         self.identity = identity
@@ -89,8 +92,8 @@ import os
         let events = EventRelay()
         let backend = HubCacheBackend(local: local, cache: cache, reporting: reporting, store: store, window: window,
                                       signal: signal, hub: hubInfo, onChange: onChange,
-                                      onPairingsChanged: { events.pairingsChanged() })
-        listener = HubListener(router: HubRouter(backend: backend), keyring: HubKeyring(store: store, window: window),
+                                      onPairingsChanged: { events.pairingsChanged() }, pushKey: push?.publicKey)
+        listener = HubListener(router: HubRouter(backend: backend, presence: push?.presence), keyring: HubKeyring(store: store, window: window),
                                advertise: {
                                    HubListener.Advertisement(tag: HubProtocol.tag(for: hubIDBox.value), pairing: window.isOpen)
                                },
@@ -294,6 +297,7 @@ import os
         do { try store.removeAll() } catch {
             Self.logger.error("Remove all pairings failed: \(String(describing: error), privacy: .public)")
         }
+        push?.resetKey()  // PUSH-001 R18: a new push key, so every old grant stops working
         let newID = UUID()
         defaults.set(newID.uuidString, forKey: Self.hubIDKey)
         hubIDBox.value = newID
@@ -321,6 +325,16 @@ final class HubIDBox: Sendable {
         get { lock.withLock { $0 } }
         set { lock.withLock { $0 = newValue } }
     }
+}
+
+/// What the hub needs from push (ADR-0023, PUSH-001 R18, R54, R72). Compiled always, used only
+/// with LEVELS_PUSH and a relay URL; otherwise `HubServer` gets `nil` and `GET /v1/push-key` is 404.
+struct HubPushSupport: Sendable {
+    let keys: MacPushKeyStore
+    let presence: HubPresence
+
+    var publicKey: @Sendable () -> String? { { [keys] in keys.publicKey } }
+    func resetKey() { keys.reset() }
 }
 
 /// Late-bound listener events: the listener is built before `self` can be captured.

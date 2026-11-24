@@ -50,6 +50,10 @@ final class FakeBackend: HubBackend {
         var seen: [DeviceID] = []
         var paired: Set<DeviceID> = []
         var pushTokens: [DeviceID: [PushToken]] = [:]
+        var uploads: [PushTokenUpload] = []
+        var uploadAnswer: PushUploadResult?
+        /// `nil` = push off on this Mac (404).
+        var pushKey: PushKeyAnswer?
     }
     let state = Mutex(State())
     let signal = HubChangeSignal()
@@ -85,13 +89,17 @@ final class FakeBackend: HubBackend {
         return true
     }
 
-    func setPushTokens(_ tokens: [PushToken], for id: DeviceID) async -> Bool {
+    func setPushUpload(_ upload: PushTokenUpload, for id: DeviceID) async -> PushUploadResult {
         state.withLock { s in
-            guard s.paired.contains(id) else { return false }
-            s.pushTokens[id] = tokens
-            return true
+            guard s.paired.contains(id) else { return .failed }
+            if let answer = s.uploadAnswer { return answer }
+            s.pushTokens[id] = upload.tokens
+            s.uploads.append(upload)
+            return .stored
         }
     }
+
+    func pushKey(for id: DeviceID) async -> PushKeyAnswer? { state.withLock { $0.pushKey } }
 
     func removeRecord(_ id: DeviceID) async { state.withLock { $0.removed.append(id) } }
     func forget(_ id: DeviceID) async { state.withLock { $0.forgotten.append(id); $0.paired.remove(id) } }

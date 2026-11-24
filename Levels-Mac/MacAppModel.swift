@@ -115,18 +115,36 @@ import os
         loginItem = LoginItemController(service: MainAppLoginService())
         alerts = AlertController(store: UserDefaultsAlertStore(suiteName: group), source: source,  // ALR-001
                                  preferences: preferences)
+        #if LEVELS_PUSH
+        // PUSH-001 R18: the Mac's push key (Keychain, made on first use). Push support exists only
+        // with a relay URL; without one `GET /v1/push-key` is 404 and iPhones mint no grants.
+        let pushKeys = MacPushKeyStore(service: LevelsAppConfig.keychainService.replacingOccurrences(of: ".device-identity", with: "") + ".push-key",
+                                       items: SecKeychainItems(accessGroup: LevelsAppConfig.keychainAccessGroup))
+        // The store signs with its current key, so a reset key is used from the next push on.
+        // The key is made only when a relay URL is set.
+        let relayClient = PushRelayClient(relayURL: LevelsAppConfig.pushRelayURL ?? "", auth: pushKeys)
+            .flatMap { pushKeys.current() == nil ? nil : $0 }
+        let pushSupport = relayClient.map { _ in HubPushSupport(keys: pushKeys, presence: HubPresence()) }
+        #else
+        let pushSupport: HubPushSupport? = nil  // free team: no relay, no push key
+        #endif
         let hub = HubServer(local: local, cache: cache, reporting: reporting, defaults: groupDefaults, identity: identity,
                             signal: hubSignal, onChange: { relay.fire() },
                             hubName: {
                                 // SYNC-002 R17: the name this Mac reports; sent only inside the encrypted session.
                                 DefaultDeviceName.resolved(kind: .mac, thisDeviceName: preferences.load().thisDeviceName)
-                            })
+                            }, push: pushSupport)
         self.hub = hub
         #if LEVELS_PUSH
-        // Tokens live in the hub's pairing store (removed with the device). No relay URL = off.
-        let relayClient = PushRelayClient(relayURL: LevelsAppConfig.pushRelayURL ?? "")
-        pushFeed.bind(WidgetPushScheduler(relay: relayClient, store: hub.store))
-        Self.logger.notice("Widget push \(relayClient == nil ? "off (no relay URL)" : "on", privacy: .public)")
+        // Tokens and grants live in the hub's pairing store (removed with the device). No relay URL = off.
+        let alertStore = UserDefaultsAlertStore(suiteName: group)
+        let presence = pushSupport?.presence
+        pushFeed.bind(WidgetPushScheduler(
+            relay: relayClient,
+            store: hub.store,
+            alertThreshold: { alertStore.loadSettings(defaults: .defaults(for: .mac)).threshold },  // R52, ALR-001
+            isLive: { id, at in presence?.isLive(id, at: at) ?? false }))  // R54
+        Self.logger.notice("Widget push \(relayClient == nil ? "off (no relay URL or no key)" : "on", privacy: .public)")
         #endif
         reportingChanged.set { Task { @MainActor in await hub.evaluate() } }
     }

@@ -170,9 +170,18 @@ public struct PairedClient: Codable, Sendable, Equatable, Identifiable {
     /// Forget and Remove drop them with the key; a re-pair starts with none. Optional, so
     /// items written before push existed still decode.
     public var pushTokens: [PushToken]?
+    /// The relay grant for those tokens (v2 upload, PUSH-001 R72); opaque to the Mac. Optional
+    /// like `pushTokens`.
+    public var pushGrant: String?
+    /// Unix seconds.
+    public var pushGrantExpiresAt: Int64?
+    /// The relay refused the grant or reported tokens gone (R16, R19): no pushes to this device
+    /// until it sends a new grant; `GET /v1/push-key` tells it `renew`.
+    public var pushNeedsGrant: Bool?
 
     public init(id: DeviceID, name: String, kind: DeviceKind, key: Data, pairedAt: Date, lastSeenAt: Date? = nil,
-                pushTokens: [PushToken]? = nil) {
+                pushTokens: [PushToken]? = nil, pushGrant: String? = nil, pushGrantExpiresAt: Int64? = nil,
+                pushNeedsGrant: Bool? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -180,6 +189,17 @@ public struct PairedClient: Codable, Sendable, Equatable, Identifiable {
         self.pairedAt = pairedAt
         self.lastSeenAt = lastSeenAt
         self.pushTokens = pushTokens
+        self.pushGrant = pushGrant
+        self.pushGrantExpiresAt = pushGrantExpiresAt
+        self.pushNeedsGrant = pushNeedsGrant
+    }
+
+    /// What the Mac's push scheduler reads.
+    public var pushRegistration: PushRegistration? {
+        guard let tokens = pushTokens, !tokens.isEmpty else { return nil }
+        return PushRegistration(tokens: tokens, grant: pushGrant,
+                                grantExpiresAt: pushGrantExpiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                                needsGrant: pushNeedsGrant ?? false)
     }
 
     public var symmetricKey: SymmetricKey { SymmetricKey(data: key) }

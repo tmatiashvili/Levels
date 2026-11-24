@@ -1,5 +1,6 @@
 import Foundation
 import LevelsModel
+import Synchronization
 import os
 
 /// Who sent a request, as proven by the TLS-PSK handshake (NET-001 R5).
@@ -19,8 +20,11 @@ public protocol HubBackend: Sendable {
     func ingest(_ record: DeviceBattery) async -> Bool
     /// `DELETE /v1/devices/me`.
     func removeRecord(_ id: DeviceID) async
-    /// `PUT /v1/push-tokens`: replaces the device's push tokens. `false` = not stored.
-    func setPushTokens(_ tokens: [PushToken], for id: DeviceID) async -> Bool
+    /// `PUT /v1/push-tokens`: replaces the device's push tokens (and, v2, its grant).
+    func setPushUpload(_ upload: PushTokenUpload, for id: DeviceID) async -> PushUploadResult
+    /// `GET /v1/push-key`: this Mac's push key and the caller's grant state; `nil` = push off
+    /// on this Mac (404).
+    func pushKey(for id: DeviceID) async -> PushKeyAnswer?
     /// `DELETE /v1/pairing` (NET-002 R9).
     func forget(_ id: DeviceID) async
     func isPaired(_ id: DeviceID) -> Bool
@@ -35,17 +39,57 @@ public protocol HubBackend: Sendable {
     func seen(_ id: DeviceID) async
 }
 
+/// What became of a `PUT /v1/push-tokens`.
+public enum PushUploadResult: Sendable, Equatable {
+    case stored
+    /// The grant doesn't name this Mac's key or doesn't cover the tokens (400).
+    case rejected
+    /// Not paired yet, or the Keychain write failed (503).
+    case failed
+}
+
+/// Which paired devices have a long-poll open right now (ADR-0020 Decision 5): their app is in
+/// the foreground and reloads its own widgets, so the Mac doesn't push to them (PUSH-001 R54).
+public final class HubPresence: Sendable {
+    /// A long-poll that ended this recently still counts: the app sends the next one at once.
+    public static let grace: TimeInterval = 10
+    private let state = Mutex<[DeviceID: (open: Int, lastEnd: Date?)]>([:])
+    public init() {}
+
+    public func begin(_ id: DeviceID) { state.withLock { $0[id, default: (0, nil)].open += 1 } }
+
+    public func end(_ id: DeviceID, at date: Date) {
+        state.withLock { s in
+            var e = s[id, default: (0, nil)]
+            e.open = max(0, e.open - 1)
+            e.lastEnd = date
+            s[id] = e
+        }
+    }
+
+    public func isLive(_ id: DeviceID, at date: Date) -> Bool {
+        state.withLock { s in
+            guard let e = s[id] else { return false }
+            if e.open > 0 { return true }
+            return e.lastEnd.map { date.timeIntervalSince($0) < Self.grace } ?? false
+        }
+    }
+}
+
 /// The routes of NET-001 R4 and NET-002 R5. Tests drive it with plain requests.
 public actor HubRouter {
     private static let logger = Logger(subsystem: LevelsLog.subsystem, category: "hub")
 
     private let backend: any HubBackend
+    private let presence: HubPresence?
     private let now: @Sendable () -> Date
     /// Returns a sleep that ends `duration` after the call (deadline fixed at the call).
     private let timer: @Sendable (Duration) -> @Sendable () async throws -> Void
 
-    public init<C: Clock<Duration>>(backend: any HubBackend, now: @escaping @Sendable () -> Date = Date.init, clock: C = ContinuousClock()) {
+    public init<C: Clock<Duration>>(backend: any HubBackend, presence: HubPresence? = nil,
+                                    now: @escaping @Sendable () -> Date = Date.init, clock: C = ContinuousClock()) {
         self.backend = backend
+        self.presence = presence
         self.now = now
         self.timer = { duration in
             let deadline = clock.now.advanced(by: duration)
@@ -68,7 +112,7 @@ public actor HubRouter {
         let methods: [String: Set<String>] = [
             HubProtocol.Path.snapshot: ["GET"], HubProtocol.Path.readings: ["POST"],
             HubProtocol.Path.devicesMe: ["DELETE"], HubProtocol.Path.pairing: ["DELETE"], HubProtocol.Path.pair: ["POST"],
-            HubProtocol.Path.pairConfirm: ["POST"], HubProtocol.Path.pushTokens: ["PUT"],
+            HubProtocol.Path.pairConfirm: ["POST"], HubProtocol.Path.pushTokens: ["PUT"], HubProtocol.Path.pushKey: ["GET"],
         ]
         guard let allowed = methods[request.path] else { return HTTPResponse(status: 404) }
         guard allowed.contains(request.method) else { return HTTPResponse(status: 405) }
@@ -85,9 +129,10 @@ public actor HubRouter {
         }
         await backend.seen(id)
         switch request.path {
-        case HubProtocol.Path.snapshot: return await snapshot(request)
+        case HubProtocol.Path.snapshot: return await snapshot(request, from: id)
         case HubProtocol.Path.readings: return await readings(request, from: id)
         case HubProtocol.Path.pushTokens: return await pushTokens(request, from: id)
+        case HubProtocol.Path.pushKey: return await pushKey(request, from: id)
         case HubProtocol.Path.devicesMe:
             await backend.removeRecord(id)
             return HTTPResponse(status: 204)
@@ -99,7 +144,7 @@ public actor HubRouter {
 
     // MARK: GET /v1/snapshot (R4, R8, R11)
 
-    private func snapshot(_ request: HTTPRequest) async -> HTTPResponse {
+    private func snapshot(_ request: HTTPRequest, from id: DeviceID) async -> HTTPResponse {
         let changes = backend.changes()  // subscribe before reading, so no change is missed
         guard let current = await backend.snapshot() else { return HTTPResponse(status: 503) }
         let tag = HubWire.etag(for: current.devices)
@@ -109,6 +154,8 @@ public actor HubRouter {
         }
         let sleep = timer(min(.seconds(seconds), HubProtocol.maxWait))
         let backend = backend
+        presence?.begin(id)
+        defer { presence?.end(id, at: now()) }
         let changed: HubSnapshot? = await withTaskGroup(of: HubSnapshot?.self) { group in
             group.addTask {
                 try? await sleep()
@@ -165,16 +212,35 @@ public actor HubRouter {
         guard let header = request.header(HubProtocol.deviceHeader), DeviceID(recordName: header) == id,
               backend.isPaired(id)
         else { return HTTPResponse(status: 403) }
-        guard let upload = try? HubWire.decoder().decode(PushTokenUpload.self, from: request.body),
-              upload.v == HubProtocol.pushTokensVersion
+        guard var upload = try? HubWire.decoder().decode(PushTokenUpload.self, from: request.body),
+              HubProtocol.acceptedPushTokensVersions.contains(upload.v)
         else { return HTTPResponse(status: 400) }
         var seen = Set<PushToken>()
-        let tokens = upload.tokens.filter { seen.insert($0).inserted }
-        guard tokens.count <= HubProtocol.maxPushTokensPerDevice, tokens.allSatisfy(\.isValid) else {
+        upload.tokens = upload.tokens.filter { seen.insert($0).inserted }
+        guard upload.tokens.count <= HubProtocol.maxPushTokensPerDevice, upload.tokens.allSatisfy(\.isValid) else {
             return HTTPResponse(status: 400)
         }
-        guard await backend.setPushTokens(tokens, for: id) else { return HTTPResponse(status: 503) }
-        return HTTPResponse(status: 204)
+        if upload.v == 1 { upload.grant = nil; upload.grantExpiresAt = nil }
+        // A grant comes with its expiry; neither alone. At most 4 KB (the relay's own limit).
+        guard (upload.grant == nil) == (upload.grantExpiresAt == nil), (upload.grant?.utf8.count ?? 0) <= 4096 else {
+            return HTTPResponse(status: 400)
+        }
+        switch await backend.setPushUpload(upload, for: id) {
+        case .stored: return HTTPResponse(status: 204)
+        case .rejected: return HTTPResponse(status: 400)
+        case .failed: return HTTPResponse(status: 503)
+        }
+    }
+
+    // MARK: GET /v1/push-key
+
+    private func pushKey(_ request: HTTPRequest, from id: DeviceID) async -> HTTPResponse {
+        guard let header = request.header(HubProtocol.deviceHeader), DeviceID(recordName: header) == id,
+              backend.isPaired(id)
+        else { return HTTPResponse(status: 403) }
+        guard let answer = await backend.pushKey(for: id) else { return HTTPResponse(status: 404) }
+        guard let body = try? HubWire.encoder().encode(answer) else { return HTTPResponse(status: 503) }
+        return HTTPResponse(status: 200, headers: ["content-type": "application/json"], body: body)
     }
 
     // MARK: POST /v1/pair (NET-002 R5)

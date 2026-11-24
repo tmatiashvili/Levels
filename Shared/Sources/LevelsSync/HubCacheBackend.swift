@@ -22,6 +22,8 @@ public final class HubCacheBackend: HubBackend {
     private let onChange: @Sendable () -> Void
     private let onSeen: @Sendable (DeviceID) -> Void
     private let onPairingsChanged: @Sendable () -> Void
+    /// This Mac's push public key (PUSH-001 R18); `nil` = push off: `GET /v1/push-key` is 404.
+    private let pushKey: (@Sendable () -> String?)?
     private let listener = Mutex<HubListener?>(nil)
     /// The last snapshot read, served when the cache file can't be read (NET-001 edge case).
     private let lastGood = Mutex<HubSnapshot?>(nil)
@@ -38,8 +40,9 @@ public final class HubCacheBackend: HubBackend {
                 store: any HubPairingStore, window: PairingWindow, signal: HubChangeSignal,
                 hub: @escaping @Sendable () -> HubInfo?, now: @escaping @Sendable () -> Date = Date.init,
                 onChange: @escaping @Sendable () -> Void = {}, onSeen: @escaping @Sendable (DeviceID) -> Void = { _ in },
-                onPairingsChanged: @escaping @Sendable () -> Void = {}) {
+                onPairingsChanged: @escaping @Sendable () -> Void = {}, pushKey: (@Sendable () -> String?)? = nil) {
         self.onPairingsChanged = onPairingsChanged
+        self.pushKey = pushKey
         self.local = local
         self.cache = cache
         self.reporting = reporting
@@ -80,16 +83,41 @@ public final class HubCacheBackend: HubBackend {
         return true
     }
 
-    public func setPushTokens(_ tokens: [PushToken], for id: DeviceID) async -> Bool {
-        guard store.key(for: id) != nil else { return false }  // a pending pairing has no item yet
+    public func setPushUpload(_ upload: PushTokenUpload, for id: DeviceID) async -> PushUploadResult {
+        guard store.key(for: id) != nil else { return .failed }  // a pending pairing has no item yet
+        // A grant must name this Mac's key and cover every token, or the relay would refuse every
+        // push. Unverified read: only the relay can check its MAC.
+        if let grant = upload.grant, !upload.tokens.isEmpty {
+            guard let macKey = pushKey?(), PushGrantInfo.read(grant)?.covers(upload.tokens, macKey: macKey) == true else {
+                Self.logger.notice("Push grant from \(id.recordName, privacy: .public) doesn't match this Mac or its tokens")
+                return .rejected
+            }
+        }
         do {
-            let stored = try store.setPushTokens(tokens, for: id)
-            if stored { Self.logger.notice("Push tokens for \(id.recordName, privacy: .public): \(tokens.count, privacy: .public)") }
-            return stored
+            guard try store.setPushRegistration(upload.tokens, grant: upload.grant, expiresAt: upload.grantExpiresAt, for: id) else {
+                return .failed
+            }
+            Self.logger.notice("Push tokens for \(id.recordName, privacy: .public): \(upload.tokens.count, privacy: .public), grant \(upload.grant == nil ? "none" : "yes", privacy: .public)")
+            return .stored
         } catch {
             Self.logger.error("Push tokens for \(id.recordName, privacy: .public): Keychain write failed: \(String(describing: error), privacy: .public)")
-            return false
+            return .failed
         }
+    }
+
+    public func pushKey(for id: DeviceID) async -> PushKeyAnswer? {
+        guard let macKey = pushKey?() else { return nil }
+        let client = store.all().first { $0.id == id }
+        return PushKeyAnswer(macKey: macKey, grant: Self.grantState(client, macKey: macKey, now: now()))
+    }
+
+    /// Pure; unit-tested.
+    static func grantState(_ client: PairedClient?, macKey: String, now: Date) -> PushKeyAnswer.GrantState {
+        guard let client, let grant = client.pushGrant else { return .none }
+        if client.pushNeedsGrant == true { return .renew }
+        guard let info = PushGrantInfo.read(grant), info.covers(client.pushTokens ?? [], macKey: macKey) else { return .renew }
+        let expiry = client.pushGrantExpiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } ?? info.expiresAt
+        return expiry.timeIntervalSince(now) < HubProtocol.pushGrantRenewBefore ? .renew : .ok
     }
 
     public func removeRecord(_ id: DeviceID) async {
