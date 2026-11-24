@@ -102,7 +102,11 @@ import os
         #endif
         let hub = LocalNetworkSyncService(local: local, outbox: outbox, transport: transport,
                                           pairing: pairingStore, identity: identity, cache: cache, etagSuite: group,
-                                          onChange: { relay.fire() }, push: push)
+                                          onChange: { relay.fire() }, push: push,
+                                          // Every Mac contact sends a changed or 5-min-old own reading first.
+                                          uploaded: UploadedReadingMemory(suiteName: group),
+                                          ownRecord: BatteryReporter.recordSource(reader: UIDeviceBatteryReader(), kind: .iphone,
+                                                                                  identity: identity, preferences: preferences))
         // DEMO-001 R6: while demo mode is on, reports and refreshes go to DemoSyncService instead.
         let sync = LoggingSync(base: DemoAwareSync(real: hub, mode: demoMode), cacheURL: cache.fileURL,
                                onReport: { relay.fire() })

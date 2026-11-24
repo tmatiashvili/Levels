@@ -1,7 +1,12 @@
 // NET-004 R14 variant B (lead's call 29: A + B). When the App Group cache is older than 15
 // minutes, `getTimeline` asks the paired Mac itself, with the pairing key from the shared
 // Keychain group and a 4 s limit. Links LevelsNet only, never LevelsSync (ADR-0003). Never
-// posts and never touches the app's outbox.
+// touches the app's outbox.
+//
+// On the same connection it first sends this iPhone's own reading (`POST /v1/readings`) when the
+// Mac needs it (`ReadingUploadPolicy`, against the last accepted reading the app and the widget
+// share in the App Group). The app runs rarely; the widget's fetch every 30 minutes was the
+// only regular contact and left the Mac with the app's last reading.
 //
 // It first dials the Mac's last address from the App Group (the app and this widget save it
 // after each Bonjour connection), then falls back to Bonjour: Bonjour plus TLS often did not
@@ -39,8 +44,20 @@ enum WidgetHubFetch {
         let transport = NWHubTransport(findTimeout: .seconds(2), readyTimeout: .seconds(2), memory: memory,
                                        directTimeout: .milliseconds(1500))
         let client = HubClient(transport: transport, pairing: store, me: me)
+        let toSend = ReportingSetting(suiteName: LevelsAppConfig.appGroupID).isEnabled  // SYNC-001 R15a
+            ? cached?.ownRecordToSend(await WidgetOwnBattery.read()) : nil
+        let uploaded = UploadedReadingMemory(suiteName: LevelsAppConfig.appGroupID)
         let fetched = await within(limit) { () -> Result<HubFetch, HubError> in
             do throws(HubError) {
+                do throws(HubError) {
+                    if try await client.postIfNeeded(toSend, memory: uploaded) {
+                        logger.notice("Widget: sent own reading \(toSend?.level ?? -1, privacy: .public) % to the Mac")
+                    }
+                } catch {
+                    // Not reached: the fetch below fails the same way. Refused: fetch anyway.
+                    guard case .badResponse(let code) = error else { throw error }
+                    logger.notice("Widget: the Mac refused the own reading (\(code, privacy: .public)); fetching anyway")
+                }
                 return .success(try await client.snapshot(ifNoneMatch: nil, wait: nil))
             } catch {
                 return .failure(error)

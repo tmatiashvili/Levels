@@ -209,17 +209,7 @@ public actor BatteryReporter {
             Self.logger.info("No device ID yet; skipping report \(reason.rawValue, privacy: .public)")
             return nil
         }
-        let flags = reading.powerState.chargingFlags
-        let device = DeviceBattery(
-            id: id,
-            name: deviceName(),
-            kind: kind,
-            level: reading.level,
-            isCharging: flags.isCharging,
-            isPluggedIn: flags.isPluggedIn,
-            isLowPowerMode: reading.isLowPowerMode,
-            updatedAt: reading.readAt
-        )
+        let device = Self.record(from: reading, id: id, name: deviceName(), kind: kind)
         lastOffered = reading
         let outcome = await sync.report([device], reason: reason)
         switch outcome {
@@ -232,6 +222,28 @@ public actor BatteryReporter {
             log.record(reason, at: now())
         }
         return outcome
+    }
+
+    /// SYNC-002 R16/R17: one reading as this device's record.
+    public static func record(from reading: BatteryReading, id: DeviceID, name: String, kind: DeviceKind) -> DeviceBattery {
+        let flags = reading.powerState.chargingFlags
+        return DeviceBattery(id: id, name: name, kind: kind, level: reading.level, isCharging: flags.isCharging,
+                             isPluggedIn: flags.isPluggedIn, isLowPowerMode: reading.isLowPowerMode,
+                             updatedAt: reading.readAt)
+    }
+
+    /// A fresh read of this device's record, mapped as a report maps it, without reporting
+    /// it: for the hub sync's "send before fetch" check. `nil` on a read failure or without
+    /// a device ID.
+    public static func recordSource(reader: any BatteryReader, kind: DeviceKind, identity: any DeviceIdentityProviding,
+                                    preferences: any DisplayPreferencesStore) -> @Sendable () async -> DeviceBattery? {
+        {
+            guard let id = (try? identity.currentDeviceID()) ?? nil else { return nil }
+            let reading = await reader.read()
+            guard !reading.isReadFailure, reading.level != nil else { return nil }
+            let name = DefaultDeviceName.resolved(kind: kind, thisDeviceName: preferences.load().thisDeviceName)
+            return record(from: reading, id: id, name: name, kind: kind)
+        }
     }
 
     /// SYNC-001 R15a: `false` (and logged) while reporting is off.
