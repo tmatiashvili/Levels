@@ -220,6 +220,48 @@ struct HubLoopbackTests {
         await mac.listener.stop()
     }
 
+    /// The widget's 4 s budget did not fit Bonjour plus TLS (2026-11-24). A Bonjour connection
+    /// now saves the Mac's address; the next connection dials it first and falls back to
+    /// Bonjour when it fails.
+    @Test func lastAddressIsSavedTriedFirstAndFallsBack() async throws {
+        let mac = Mac()
+        await mac.report(level: 80)
+        let port = try await mac.listener.start()
+        let pairing = try await pair(mac, port: port)
+        let store = InMemoryClientPairingStore(pairing)
+
+        // A stale address (nothing listens on port 1): falls back to the locator, then saves
+        // the address that worked.
+        let memory = InMemoryHubEndpointMemory(HubEndpointRecord(hubID: pairing.hubID, host: "127.0.0.1", port: 1,
+                                                                 savedAt: Date()))
+        let first = NWHubTransport(locator: FixedHubLocator(loopbackPort: port), memory: memory)
+        guard case .changed = try await HubClient(transport: first, pairing: store, me: hubPhoneID).snapshot(ifNoneMatch: nil) else {
+            Issue.record("expected 200"); return
+        }
+        await first.reset()
+        #expect(memory.load()?.port == port && memory.load()?.hubID == pairing.hubID)
+
+        // Bonjour finds nothing now, yet the saved address still reaches the Mac.
+        let second = NWHubTransport(locator: NotFoundLocator(), memory: memory)
+        guard case .changed = try await HubClient(transport: second, pairing: store, me: hubPhoneID).snapshot(ifNoneMatch: nil) else {
+            Issue.record("expected 200"); return
+        }
+        await second.reset()
+
+        // A saved address for another Mac is not dialled (and is dropped).
+        memory.save(HubEndpointRecord(hubID: UUID(), host: "127.0.0.1", port: port, savedAt: Date()))
+        let third = NWHubTransport(locator: NotFoundLocator(), memory: memory)
+        await #expect(throws: HubError.notFound) {
+            try await HubClient(transport: third, pairing: store, me: hubPhoneID).snapshot(ifNoneMatch: nil)
+        }
+        #expect(memory.load() == nil)
+        await mac.listener.stop()
+    }
+
+    struct NotFoundLocator: HubLocator {
+        func endpoint(forTag tag: String, timeout: Duration) async throws(HubError) -> NWEndpoint { throw .notFound }
+    }
+
     /// A POST while the long-poll holds the kept connection used to replace it and leave the
     /// old one open; a few rounds filled the Mac's 4-connection limit (R12) and the iPhone
     /// went "away". Now the POST gets a short connection that is closed afterwards.
