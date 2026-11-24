@@ -139,14 +139,20 @@ extension HubProtocol {
 /// reload then).
 public struct WidgetPushTokenStore: Sendable {
     public static let key = "push.widgetToken"
+    /// The Live Activity's token (LIVE-001 R31), kept by the app the same way.
+    public static let liveActivityKey = "push.liveActivityToken"
     private let suiteName: String?
+    private let key: String
 
-    public init(suiteName: String?) { self.suiteName = suiteName }
+    public init(suiteName: String?, key: String = WidgetPushTokenStore.key) {
+        self.suiteName = suiteName
+        self.key = key
+    }
 
     private var defaults: UserDefaults? { suiteName.flatMap(UserDefaults.init(suiteName:)) }
 
     public func load() -> PushToken? {
-        guard let data = defaults?.data(forKey: Self.key) else { return nil }
+        guard let data = defaults?.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(PushToken.self, from: data)
     }
 
@@ -154,9 +160,9 @@ public struct WidgetPushTokenStore: Sendable {
     @discardableResult
     public func save(_ token: PushToken) -> Bool {
         guard let defaults, load() != token, let data = try? JSONEncoder().encode(token) else { return false }
-        defaults.set(data, forKey: Self.key)
+        defaults.set(data, forKey: key)
         return true
     }
 
-    public func clear() { defaults?.removeObject(forKey: Self.key) }
+    public func clear() { defaults?.removeObject(forKey: key) }
 }

@@ -16,6 +16,7 @@ import WidgetKit
 struct LevelsWidgets: WidgetBundle {
     var body: some Widget {
         PhoneDevicesWidget()
+        LevelsLiveActivity()  // LIVE-001: Lock Screen, StandBy, Dynamic Island
     }
 }
 

@@ -32,6 +32,7 @@ struct SettingsSheet: View {
                 }
 
                 MacSettingsSection()
+                if model.pairedMac != nil, !model.isDemo { LiveActivitySettingsSection() }  // LIVE-001 R4
                 SampleDevicesSettingsSection()  // DEMO-001 R3
 
                 Section {

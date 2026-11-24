@@ -120,7 +120,7 @@ public protocol PushRelayAuth: Sendable {
 - **R52** Exceptions that skip R51 but still count toward R53: a shown device is plugged in or unplugged, or crosses its low-battery threshold (ALR-001).
 - **R53** At most 48 widget pushes per iPhone per day (local midnight to midnight). After that, none until the next day. The count is kept in memory: a Mac relaunch starts it again (the relay's 100 per 24 h per token still holds).
 - **R54** No widget push while that iPhone is talking to the Mac with the app in the foreground (its long-poll is open, ADR-0020 Decision 5): the app reloads its widgets itself, unbudgeted. A long-poll that ended less than 10 s ago still counts (the next one follows at once). Changes in that time are treated as delivered, not saved for later.
-- **R55** A Live Activity token gets an update on every change of its device's level (whole percent) or charging state, priority 5, at most one per 60 s; priority 10 only for "full", "unplugged" and the final `end`. `stale-date` = now + 30 min on every update.
+- **R55** (Superseded by LIVE-001 R23–R29, owner decision V: one activity for iPhone, Mac and AirPods; the Mac pushes visible changes with priority 5 at most once per 60 s and plug, unplug, 100 % and threshold crossings at once with priority 10.) Was: a Live Activity token gets an update on every change of its device's level (whole percent) or charging state, priority 5, at most one per 60 s; priority 10 only for "full", "unplugged" and the final `end`. `stale-date` = now + 30 min on every update.
 - **R56** Pushing is on only when the paid build has a relay URL configured and the iPhone sent a grant; otherwise nothing is sent and nothing changes for the user.
 
 ### iPhone (owner of `Levels-iOS`, `Widgets-iOS`)
@@ -132,8 +132,8 @@ public protocol PushRelayAuth: Sendable {
   - `PUT /v1/push-tokens`, body v2: `{"v":2,"tokens":[{"token":"<hex>","env":"…","kind":"…"}],"grant":"g1.…","grantExpiresAt":<unix>}` → 204. The Mac reads the grant without its MAC and answers 400 when it doesn't name this Mac's key or doesn't cover every token (same kind and env). `grant` and `grantExpiresAt` come together or not at all. An empty `tokens` list clears the device's push state. v1 (`{"v":1,"tokens":[…]}`, the first client) is still accepted and stored, but without a grant nothing is pushed (R56).
   - The iPhone reads `GET /v1/push-key` on each new connection, when its tokens change and every 15 minutes while connected. It sends tokens and grant on each new connection and whenever its tokens or the Mac key change or the Mac says `none` or `renew`. A grant is reused from the app's Keychain while it has more than 7 days left, names the same Mac key and covers the same tokens. A newer iPhone sends nothing to a Mac that answers 404.
 - **R73** The widget's timeline provider, on each reload, fetches from the Mac (NET-004 variant B) unless the App Group cache is under 60 s old. It can't tell a push-triggered reload from another (Apple gives no signal), so this applies to every reload.
-- **R74** "Follow charging": a button on a device row (Mac or accessory, charging or below its threshold) starts a Live Activity with `pushType: .token`. Static attributes hold the device name and kind; `ContentState` holds only `level` (Int, 0–100), `isCharging` (Bool), `updatedAt` (Unix seconds); default JSON coding (Apple requires it). Its token goes to the Mac per R72. It ends at 100 %, at unplug (Mac sends `end`), or after 8 hours. One at a time.
-- **R75** Live Activity is a Levels Pro feature (ADR-0021); widget push follows the widget's own tier. See open question 1.
+- **R74** (Superseded by LIVE-001 R1–R13, R31, owner decision V: a "Live levels" activity for this iPhone, the Mac and AirPods, started from the Devices screen or Settings.) Was: "Follow charging": a button on a device row (Mac or accessory, charging or below its threshold) starts a Live Activity with `pushType: .token`. Static attributes hold the device name and kind; `ContentState` holds only `level` (Int, 0–100), `isCharging` (Bool), `updatedAt` (Unix seconds); default JSON coding (Apple requires it). Its token goes to the Mac per R72. It ends at 100 %, at unplug (Mac sends `end`), or after 8 hours. One at a time.
+- **R75** Live Activity is a Levels Pro feature (ADR-0021); widget push follows the widget's own tier. See open question 1. Owner decision V leaves this open for the Live Activity: LIVE-001 R2 gates it in one function that allows it for now.
 
 ### Owner setup after paying (one time)
 
@@ -180,13 +180,13 @@ After enrollment (manual):
 
 - [ ] AC12 — From the deployed Worker, a widget push to the owner's Debug iPhone returns `sent` (proves HTTP/2 from Workers) and the widget reloads within 1 minute with WidgetKit developer mode on.
 - [ ] AC13 — With developer mode off, over 3 days on the home Wi-Fi, the median delay from a Mac-side change to the iPhone widget showing it is under 5 minutes while the Mac sent ≤ 48 pushes a day. Record how many pushes produced no reload.
-- [ ] AC14 — "Follow charging" on AirPods: the Live Activity shows each whole-percent change within 2 minutes and ends at 100 %.
+- [ ] AC14 — (Now LIVE-001 AC14.) The Live Activity shows each whole-percent change within 2 minutes.
 - [ ] AC15 — `wrangler tail` during AC12 shows no token, grant or payload.
 
 Apple side (owned by the Swift work, `feature/push-widget-client`):
 
 - [x] AC20 — Given a Mac push key and body, `PushRelayAuth.headers` yields a signature the relay accepts. Shared vectors in `relay/test/vectors/push-auth-v1.json` (body bytes, body hash, signing string, token hashes, key format, one CryptoKit and one node:crypto signature) are asserted by `relay/test/vectors.test.ts` and `Shared/Tests/LevelsNetTests/PushAuthVectorTests.swift`.
-- [x] AC21 — R50–R54: with a fake clock, changes inside 15 min coalesce into one push at the gap's end, at most 48 a day (local midnight), plug/unplug and alert-threshold crossing skip the gap, no push while that iPhone's long-poll is open (`WidgetPushSchedulerTests`). R55 (Live Activity) is not built yet.
+- [x] AC21 — R50–R54: with a fake clock, changes inside 15 min coalesce into one push at the gap's end, at most 48 a day (local midnight), plug/unplug and alert-threshold crossing skip the gap, no push while that iPhone's long-poll is open (`WidgetPushSchedulerTests`). R55 (Live Activity) is built as LIVE-001 R23–R29 (`LiveActivityPushSchedulerTests`).
 - [x] AC22 — R16, R19: `invalidTokens` and 410 remove those tokens and mark the iPhone `renew`; a refused grant stops pushes until a new one arrives.
 
 ## Tests

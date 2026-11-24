@@ -45,6 +45,8 @@ import os
         didSet { groupDefaults.set(hintDismissed, forKey: ShortcutsHint.dismissedKey) }
     }
 
+    /// LIVE-001: the "Live levels" Live Activity (start/stop on the Devices screen and in Settings).
+    let liveActivity: LiveActivityController
     @ObservationIgnored let reporter: BatteryReporter
     @ObservationIgnored let reportLog: ReportLog
     @ObservationIgnored let groupDefaults: UserDefaults
@@ -120,7 +122,14 @@ import os
             },
             reporter: reporter, sync: sync, hub: hub,
             onDisplayPreferencesChanged: { await local.displayPreferencesChanged() })
-        relay.set { source.notifyChanged() }
+        // LIVE-001 R20: every cache change while the process runs also updates the Live Activity.
+        let liveActivity = LiveActivityController(cache: cache, appGroupID: group, pairing: { pairingStore.current() },
+                                                  onTokenChange: { Task { await hub.refresh(.foreground) } })
+        relay.set {
+            source.notifyChanged()
+            Task { @MainActor in await liveActivity.refresh() }
+        }
+        self.liveActivity = liveActivity
 
         self.local = local
         self.hub = hub
@@ -158,6 +167,7 @@ import os
         }
         if !isDemo { await hub.refresh(.launch) }  // NET-003 R6; DEMO-001 R5: no network in demo mode
         await refreshPairingState()
+        await liveActivity.restore()  // LIVE-001 R5, R7, R8
         startPathMonitor()
     }
 
@@ -169,6 +179,7 @@ import os
             await store.refreshOnForeground()  // reports, then `hub.refresh(.foreground)`
             if isActive, !isDemo { await hub.startLiveUpdates() }  // DEMO-001 R5
             await refreshPairingState()
+            await liveActivity.refresh()  // LIVE-001 R7: ends it after 8 hours
         }
         WidgetCenter.shared.reloadAllTimelines()  // free while in the foreground (ADR-0017)
     }
@@ -192,10 +203,11 @@ import os
     /// expires it.
     nonisolated func backgroundRefresh() async {
         Self.logger.notice("Background refresh started")
-        let (reporter, hub, demoMode) = await MainActor.run { (self.reporter, self.hub, self.demoMode) }
+        let (reporter, hub, demoMode, live) = await MainActor.run { (self.reporter, self.hub, self.demoMode, self.liveActivity) }
         let finished = await Self.within(.seconds(20)) {
             await reporter.report(reason: .backgroundRefresh)
             if !demoMode.isOn { await hub.refresh(.backgroundRefresh) }  // DEMO-001 R5
+            await live.refresh()  // LIVE-001 R21: before iOS suspends the process again
         }
         await hub.flushWidgetReload()  // before iOS suspends the process again
         BackgroundRefresh.schedule()
@@ -244,6 +256,7 @@ import os
 
     /// NET-002 R9.
     func forgetMac() async {
+        await liveActivity.stop(reason: "unpaired")  // LIVE-001 R8
         await hub.forget()
         await refreshPairingState()
         WidgetCenter.shared.reloadAllTimelines()
