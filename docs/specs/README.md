@@ -26,6 +26,18 @@ SPIKE-001, SYNC-001, RPT-002's iCloud parts, iPad and Watch still wait for enrol
 | [NET-003](NET-003-iphone-hub-client.md) | iPhone hub client and reporting to the Mac | Ready | NET-001, NET-002, SYNC-002, UI-001 |
 | [NET-004](NET-004-iphone-app-and-widgets-local.md) | iPhone app and widgets in hub mode (free team) | Ready | NET-002, NET-003, UI-001, UI-002, UI-003 |
 
+## Next: Levels Pro (launch)
+
+Owner decisions N–Q (2026-11-24): Levels becomes a paid product. Free shows this device and one small widget; **Levels Pro** (monthly, yearly with a 1-week trial, or lifetime) adds the other devices, every widget kind, alerts and history on the iPhone. Pro is built now and tested with a local StoreKit file; the paid Apple Developer Program comes only at launch, together with iCloud. The iPhone ships in the App Store; the Mac app stays a free, notarized download with no paywall ([ADR-0021](../adr/0021-levels-pro-subscription.md), [ADR-0022](../adr/0022-distribution.md)). Legal drafts: [privacy policy](../legal/privacy-policy.md), [terms of use](../legal/terms-of-use.md).
+
+| ID | Title | Status | Depends on |
+|---|---|---|---|
+| [MON-001](MON-001-levels-pro-entitlements.md) | Levels Pro products and entitlements | Draft | SYNC-002, NET-004, UI-003 |
+| [MON-002](MON-002-paywall-and-gating.md) | Levels Pro paywall and gates | Draft | MON-001, UI-001, UI-002, UI-003, NET-004 |
+| [REL-001](REL-001-app-store-readiness.md) | App Store and Mac download readiness | Draft | MON-001, MON-002, SYNC-001, NET-004 |
+
+Order: MON-001, then MON-002, both on the free team; REL-001's "now" items (R1) in parallel; the rest of REL-001 at enrollment.
+
 ## v0.1 — Mac agent and iPhone app with widgets
 
 | ID | Title | Status | Depends on |
