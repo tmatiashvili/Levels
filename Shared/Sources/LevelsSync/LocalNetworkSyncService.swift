@@ -49,8 +49,16 @@ public actor LocalNetworkSyncService: BatterySyncing {
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
     private let onChange: @Sendable () -> Void
+    /// Push (ADR-0023): this iPhone's push tokens. `nil` = push off (`LEVELS_PUSH_ENABLED = NO`):
+    /// `PUT /v1/push-tokens` is never sent.
+    private let pushTokens: (@Sendable () async -> [PushToken])?
 
     private var client: HubClient?
+    /// The token set the Mac acknowledged on this connection; `nil` = not sent since the last
+    /// (re)connect, so the next good contact sends it.
+    private var pushTokensSent: [PushToken]?
+    /// The Mac answered 404/405 (older build): stop asking until the next pairing.
+    private var pushRouteMissing = false
     private var etag: String?
     private var lastFetchAt: Date?
     private var currentStatus: SyncStatus = .localOnly
@@ -67,7 +75,9 @@ public actor LocalNetworkSyncService: BatterySyncing {
                                     pairing: any ClientPairingStore, identity: any DeviceIdentityProviding,
                                     cache: SnapshotCache, etagSuite: String? = nil, persistsETag: Bool = true,
                                     now: @escaping @Sendable () -> Date = Date.init, clock: C = ContinuousClock(),
-                                    onChange: @escaping @Sendable () -> Void = {}) {
+                                    onChange: @escaping @Sendable () -> Void = {},
+                                    pushTokens: (@Sendable () async -> [PushToken])? = nil) {
+        self.pushTokens = pushTokens
         self.local = local
         self.outbox = outbox
         self.transport = transport
@@ -121,6 +131,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         do {
             let fetch = try await client.snapshot(ifNoneMatch: etag, wait: nil)
             await handle(fetch)
+            await syncPushTokens()
         } catch {
             await apply(error)
         }
@@ -164,6 +175,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         liveGeneration += 1
         task.cancel()
         if let nw = transport as? NWHubTransport { await nw.reset() }
+        pushTokensSent = nil  // a new connection resends them
         Self.logger.notice("Live updates stopped")
     }
 
@@ -184,6 +196,8 @@ public actor LocalNetworkSyncService: BatterySyncing {
         await stopLiveUpdates()
         if let nw = transport as? NWHubTransport { await nw.reset() }
         setETag(nil)
+        pushTokensSent = nil
+        pushRouteMissing = false
         await refresh(.userPull)
     }
 
@@ -200,6 +214,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         }
         outbox.clear()
         setETag(nil)
+        pushTokensSent = nil
         await setStatus(.notPaired)
     }
 
@@ -264,6 +279,25 @@ public actor LocalNetworkSyncService: BatterySyncing {
         }
     }
 
+    /// Push: sends this iPhone's tokens after a good contact when they changed or were not
+    /// sent since the last connect. A failure is retried at the next contact.
+    private func syncPushTokens() async {
+        guard let pushTokens, !pushRouteMissing, let client = clientIfReady() else { return }
+        let current = await pushTokens()
+        guard current != pushTokensSent, !(pushTokensSent == nil && current.isEmpty) else { return }
+        do {
+            if try await client.putPushTokens(current) {
+                Self.logger.notice("Push tokens sent to the Mac (\(current.count, privacy: .public))")
+            } else {
+                pushRouteMissing = true
+                Self.logger.notice("The Mac doesn't take push tokens (older build)")
+            }
+            pushTokensSent = current
+        } catch {
+            Self.logger.notice("Push tokens not sent: \(String(describing: error), privacy: .public)")
+        }
+    }
+
     private func handle(_ fetch: HubFetch) async {
         let t = now()
         var changed = false
@@ -282,6 +316,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
 
     /// R9 table.
     private func apply(_ error: HubError) async {
+        if Self.isUnreachable(error) { pushTokensSent = nil }  // resend after the next connect
         let status: SyncStatus
         switch error {
         case .notPaired: status = .notPaired
@@ -332,6 +367,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
                 let fetch = try await client.snapshot(ifNoneMatch: etag, wait: Self.liveWait)
                 guard !Task.isCancelled, generation == liveGeneration else { return }
                 await handle(fetch)
+                await syncPushTokens()
                 failures = 0
             } catch {
                 guard !Task.isCancelled, generation == liveGeneration else { return }

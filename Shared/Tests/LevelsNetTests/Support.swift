@@ -49,6 +49,7 @@ final class FakeBackend: HubBackend {
         var forgotten: [DeviceID] = []
         var seen: [DeviceID] = []
         var paired: Set<DeviceID> = []
+        var pushTokens: [DeviceID: [PushToken]] = [:]
     }
     let state = Mutex(State())
     let signal = HubChangeSignal()
@@ -82,6 +83,14 @@ final class FakeBackend: HubBackend {
             s.devices.append(record)
         }
         return true
+    }
+
+    func setPushTokens(_ tokens: [PushToken], for id: DeviceID) async -> Bool {
+        state.withLock { s in
+            guard s.paired.contains(id) else { return false }
+            s.pushTokens[id] = tokens
+            return true
+        }
     }
 
     func removeRecord(_ id: DeviceID) async { state.withLock { $0.removed.append(id) } }

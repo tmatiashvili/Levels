@@ -93,9 +93,15 @@ import os
                                                       items: SecKeychainItems(accessGroup: LevelsAppConfig.keychainAccessGroup))
         // The Mac's last address in the App Group: the app and the widget dial it before Bonjour.
         let transport = NWHubTransport(memory: UserDefaultsHubEndpointMemory(suiteName: group))
+        #if LEVELS_PUSH
+        // Push (ADR-0023): the widget's token goes to the Mac on each connect and on change.
+        let pushTokens: (@Sendable () async -> [PushToken])? = { await PushTokenSource.current(appGroupID: group) }
+        #else
+        let pushTokens: (@Sendable () async -> [PushToken])? = nil  // free team: no aps-environment
+        #endif
         let hub = LocalNetworkSyncService(local: local, outbox: outbox, transport: transport,
                                           pairing: pairingStore, identity: identity, cache: cache, etagSuite: group,
-                                          onChange: { relay.fire() })
+                                          onChange: { relay.fire() }, pushTokens: pushTokens)
         // DEMO-001 R6: while demo mode is on, reports and refreshes go to DemoSyncService instead.
         let sync = LoggingSync(base: DemoAwareSync(real: hub, mode: demoMode), cacheURL: cache.fileURL,
                                onReport: { relay.fire() })

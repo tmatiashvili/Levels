@@ -80,6 +80,18 @@ public final class HubCacheBackend: HubBackend {
         return true
     }
 
+    public func setPushTokens(_ tokens: [PushToken], for id: DeviceID) async -> Bool {
+        guard store.key(for: id) != nil else { return false }  // a pending pairing has no item yet
+        do {
+            let stored = try store.setPushTokens(tokens, for: id)
+            if stored { Self.logger.notice("Push tokens for \(id.recordName, privacy: .public): \(tokens.count, privacy: .public)") }
+            return stored
+        } catch {
+            Self.logger.error("Push tokens for \(id.recordName, privacy: .public): Keychain write failed: \(String(describing: error), privacy: .public)")
+            return false
+        }
+    }
+
     public func removeRecord(_ id: DeviceID) async {
         await local.removeLocal(id)
         onChange()

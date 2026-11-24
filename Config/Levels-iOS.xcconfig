@@ -21,7 +21,12 @@ INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPort
 // Personal Team it holds no iCloud or push keys (SETUP.md, "Free Personal
 // Team"). With a paid team aps-environment comes back as `development`;
 // exporting for TestFlight or the App Store rewrites it to `production`.
-CODE_SIGN_ENTITLEMENTS = Levels-iOS/Levels-iOS.entitlements
+// Push (Levels.xcconfig, LEVELS_PUSH_ENABLED): NO keeps the free-team file above; YES adds
+// aps-environment and the LEVELS_PUSH Swift flag (token upload to the Mac).
+LEVELS_IOS_ENTITLEMENTS_NO = Levels-iOS/Levels-iOS.entitlements
+LEVELS_IOS_ENTITLEMENTS_YES = Config/Levels-iOS-Push.entitlements
+CODE_SIGN_ENTITLEMENTS = $(LEVELS_IOS_ENTITLEMENTS_$(LEVELS_PUSH_ENABLED))
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(LEVELS_PUSH_SWIFT_FLAG_$(LEVELS_PUSH_ENABLED))
 
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon

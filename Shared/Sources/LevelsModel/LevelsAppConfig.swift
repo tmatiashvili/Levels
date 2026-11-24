@@ -10,7 +10,11 @@ public enum LevelsAppConfig {
     /// `<rdns>.levels.device-identity` (ADR-0007).
     public static let keychainServiceKey = "LevelsKeychainService"
 
+    /// The push relay's base URL (Mac, ADR-0023): `LEVELS_PUSH_RELAY_URL`. Empty = push off.
+    public static let pushRelayURLKey = "LevelsPushRelayURL"
+
     public static var appGroupID: String? { value(appGroupKey) }
+    public static var pushRelayURL: String? { value(pushRelayURLKey) }
     public static var keychainAccessGroup: String? { value(keychainGroupKey) }
     public static var keychainService: String { value(keychainServiceKey) ?? "levels.device-identity" }
     /// iPhone's Mac pairing item, `<rdns>.levels.hub` (NET-002 R8), in the shared access group.

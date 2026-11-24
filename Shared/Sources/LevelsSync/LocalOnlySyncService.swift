@@ -43,6 +43,10 @@ public actor LocalOnlySyncService: BatterySyncing {
     /// NET-003 Design: called after each successful write that holds this device's own
     /// reading (direct or held flush); the hub client's outbox listens.
     private let onOwnWrite: @Sendable (DeviceBattery) -> Void
+    /// Push (ADR-0023): called with the cache's devices after every write, ingest or remove
+    /// that changed them. The Mac's ``WidgetPushScheduler`` judges per iPhone, with
+    /// ``widgetChange(before:after:received:now:)``, whether that iPhone's widget must hear of it.
+    private let onDevicesChanged: @Sendable ([DeviceBattery]) -> Void
     /// What writes stamp into `SnapshotFile.syncStatus`. `.localOnly` unless a wrapping
     /// service (``LocalNetworkSyncService``) sets another with ``setStatus(_:lastFetchAt:)``.
     private var currentStatus: SyncStatus = .localOnly
@@ -85,10 +89,12 @@ public actor LocalOnlySyncService: BatterySyncing {
         reporting: ReportingSetting = .inMemory(),
         widgetReloader: @escaping @Sendable () -> Void,
         onOwnWrite: @escaping @Sendable (DeviceBattery) -> Void = { _ in },
+        onDevicesChanged: @escaping @Sendable ([DeviceBattery]) -> Void = { _ in },
         now: @escaping @Sendable () -> Date = Date.init,
         clock: C = ContinuousClock()
     ) {
         self.onOwnWrite = onOwnWrite
+        self.onDevicesChanged = onDevicesChanged
         self.cache = cache
         self.policy = policy
         self.reporting = reporting
@@ -253,6 +259,7 @@ public actor LocalOnlySyncService: BatterySyncing {
                 }
             }.value
             cachedDevices = after
+            if before != after { onDevicesChanged(after) }
             if let change = Self.widgetChange(before: before, after: after, received: widgetDevices, now: now()) {
                 requestWidgetReload(change)
             }
@@ -280,6 +287,7 @@ public actor LocalOnlySyncService: BatterySyncing {
                 }
             }.value
             cachedDevices = after
+            if before != after { onDevicesChanged(after) }
             if let change = Self.widgetChange(before: before, after: after, received: widgetDevices, now: now()) {
                 requestWidgetReload(change)
             }
@@ -334,6 +342,7 @@ public actor LocalOnlySyncService: BatterySyncing {
             }
             if let own, !older.contains(own.id) { onOwnWrite(own) }
             cachedDevices = after
+            if before != after { onDevicesChanged(after) }
             if let change = Self.widgetChange(before: before, after: after, received: widgetDevices, now: t) {
                 requestWidgetReload(change)
             }

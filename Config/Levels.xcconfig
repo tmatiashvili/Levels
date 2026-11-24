@@ -47,6 +47,22 @@ VALIDATE_PRODUCT[config=Release] = YES
 LEVELS_COPYRIGHT = Copyright © 2026 Tornike Matiashvili. All rights reserved.
 INFOPLIST_KEY_NSHumanReadableCopyright = $(LEVELS_COPYRIGHT)
 
+// Push-driven widget updates (owner decision 2026-11-24, ADR-0023, PUSH-001).
+// NO while the team is a free Personal Team: it can't sign `aps-environment`, so YES
+// would break signing. With NO the build is the same as before push existed: the old
+// entitlements files, no LEVELS_PUSH Swift flag, no push handler, no token upload, no relay.
+// After enrolling (paid team): set YES and fill LEVELS_PUSH_RELAY_URL. The iPhone app and
+// widget then sign with Config/*-Push.entitlements (aps-environment = development; exporting
+// for TestFlight or the App Store rewrites it to production).
+LEVELS_PUSH_ENABLED = NO
+// The relay's https base URL, read by the Mac (Info.plist LevelsPushRelayURL). Empty = the
+// Mac never calls the relay, even with LEVELS_PUSH_ENABLED = YES. xcconfig treats `//` as a
+// comment, so write it as https:/$()/relay.example.workers.dev
+LEVELS_PUSH_RELAY_URL =
+// Swift flag per value of LEVELS_PUSH_ENABLED; targets add $(LEVELS_PUSH_SWIFT_FLAG_$(LEVELS_PUSH_ENABLED)).
+LEVELS_PUSH_SWIFT_FLAG_YES = LEVELS_PUSH
+LEVELS_PUSH_SWIFT_FLAG_NO =
+
 // Info.plist: Xcode generates the standard CFBundle* keys and merges in each
 // target's own Info.plist (INFOPLIST_FILE), which holds only the keys the
 // specs require.

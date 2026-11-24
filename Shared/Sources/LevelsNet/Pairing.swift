@@ -166,14 +166,20 @@ public struct PairedClient: Codable, Sendable, Equatable, Identifiable {
     public var key: Data
     public var pairedAt: Date
     public var lastSeenAt: Date?
+    /// The device's push tokens (`PUT /v1/push-tokens`). Kept in the same Keychain item, so
+    /// Forget and Remove drop them with the key; a re-pair starts with none. Optional, so
+    /// items written before push existed still decode.
+    public var pushTokens: [PushToken]?
 
-    public init(id: DeviceID, name: String, kind: DeviceKind, key: Data, pairedAt: Date, lastSeenAt: Date? = nil) {
+    public init(id: DeviceID, name: String, kind: DeviceKind, key: Data, pairedAt: Date, lastSeenAt: Date? = nil,
+                pushTokens: [PushToken]? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
         self.key = key
         self.pairedAt = pairedAt
         self.lastSeenAt = lastSeenAt
+        self.pushTokens = pushTokens
     }
 
     public var symmetricKey: SymmetricKey { SymmetricKey(data: key) }
