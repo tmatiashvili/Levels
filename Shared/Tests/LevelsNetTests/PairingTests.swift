@@ -447,6 +447,28 @@ struct PairingStoreTests {
         #expect(KeychainHubPairingStore(service: "x.levels.hub.client", items: items).all().isEmpty)
     }
 
+    /// A Keychain that can't be read (before first unlock) must not turn into an empty cache
+    /// that a save, remove or touch then writes over the other devices' keys.
+    @Test func unreadableKeychainNeverDropsOtherDevices() throws {
+        let items = FlakyKeychainItems()
+        let other = DeviceID(UUID())
+        let first = PairedClient(id: phoneID, name: "My iPhone", kind: .iphone, key: Data(repeating: 7, count: 32), pairedAt: t0)
+        let second = PairedClient(id: other, name: "My iPad", kind: .iphone, key: Data(repeating: 8, count: 32), pairedAt: t0 + 1)
+        try KeychainHubPairingStore(service: "s", items: items).save(first)
+
+        let store = KeychainHubPairingStore(service: "s", items: items)
+        items.failReads = true
+        #expect(store.all().isEmpty)  // reads: no keys for now
+        #expect(throws: KeychainError.self) { try store.save(second) }
+        #expect(throws: KeychainError.self) { try store.remove(phoneID) }
+        store.touch(phoneID, at: t0 + 3600)  // skipped, not written
+
+        items.failReads = false
+        #expect(store.all() == [first])  // the earlier device is still there, untouched
+        try store.save(second)
+        #expect(KeychainHubPairingStore(service: "s", items: items).all() == [first, second])
+    }
+
     @Test func AC8_clientStoreKeepsOnlyTheNewestHub() throws {
         let items = InMemoryKeychainItems()
         let store = KeychainClientPairingStore(service: "x.levels.hub", items: items)
@@ -460,4 +482,20 @@ struct PairingStoreTests {
         try store.remove()
         #expect(store.current() == nil)
     }
+}
+
+/// ``InMemoryKeychainItems`` whose reads can be made to fail (`errSecInteractionNotAllowed`).
+final class FlakyKeychainItems: KeychainItems {
+    private let base = InMemoryKeychainItems()
+    private let failing = Mutex(false)
+    var failReads: Bool {
+        get { failing.withLock { $0 } }
+        set { failing.withLock { $0 = newValue } }
+    }
+    func readAll(service: String) throws -> [String: Data] {
+        if failReads { throw KeychainError(-25308) }
+        return try base.readAll(service: service)
+    }
+    func write(service: String, account: String, data: Data) throws { try base.write(service: service, account: account, data: data) }
+    func delete(service: String, account: String?) throws { try base.delete(service: service, account: account) }
 }

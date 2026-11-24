@@ -43,6 +43,9 @@ public struct HubKeyring: Sendable {
 public actor HubListener {
     public enum Event: Sendable, Equatable {
         case ready(port: UInt16)
+        /// The running listener lost its network path; it stays up and returns to ``ready(port:)``
+        /// by itself when the path comes back.
+        case waiting(String)
         case failed(String)
         case handshakeSucceeded(HubCaller)
         /// A TLS handshake failed; `identity` is the PSK identity the client offered, when known.
@@ -108,12 +111,21 @@ public actor HubListener {
 
     /// Rebuilds the listener on the same port when the keys or the advertisement changed.
     /// Does nothing when it is not running.
-    public func reload() async {
+    ///
+    /// - Returns: `true` when the listener runs with the current keys afterwards; `false` when
+    ///   it was not running or the rebuild failed (it is then stopped, and the caller decides
+    ///   whether to retry).
+    @discardableResult
+    public func reload() async -> Bool {
         await acquire()
         defer { release() }
-        guard engine.isRunning else { return }
-        do { _ = try await engine.rebuild(force: false) } catch {
+        guard engine.isRunning else { return false }
+        do {
+            _ = try await engine.rebuild(force: false)
+            return true
+        } catch {
             Engine.logger.error("Hub listener rebuild failed: \(String(describing: error), privacy: .public)")
+            return false
         }
     }
 
@@ -254,7 +266,19 @@ extension HubListener {
                         Self.logger.notice("Hub listener ready on port \(p.rawValue, privacy: .public)")
                         self.events(.ready(port: p.rawValue))
                         if flag.set() { c.resume(returning: p.rawValue) }
-                    case .failed(let error), .waiting(let error):
+                    case .waiting(let error) where !flag.isSet:
+                        // While starting (e.g. the old listener still holds the port): fail
+                        // this attempt so `rebuild` can try again.
+                        Self.logger.error("Hub listener could not start: \(String(describing: error), privacy: .public)")
+                        listener?.cancel()
+                        if flag.set() { c.resume(throwing: error) }
+                    case .waiting(let error):
+                        // A running listener waits for its network path (Wi-Fi off, sleep).
+                        // Network.framework recovers it; cancelling here would leave the hub
+                        // down until the owner pressed Retry.
+                        Self.logger.notice("Hub listener waiting: \(String(describing: error), privacy: .public)")
+                        if self.listener === listener { self.events(.waiting(String(describing: error))) }
+                    case .failed(let error):
                         Self.logger.error("Hub listener failed: \(String(describing: error), privacy: .public)")
                         listener?.cancel()
                         if flag.set() {
@@ -310,17 +334,24 @@ extension HubListener {
             identities[ObjectIdentifier(metadata as AnyObject)] = (metadata as AnyObject, identity, now)
         }
 
-        /// The identity of a handshake, by its metadata; else (a failed handshake whose
-        /// metadata is gone) the oldest unclaimed one.
+        /// The identity of a handshake, by its metadata only (a ready connection always has it).
         private func claimIdentity(for connection: NWConnection) -> String? {
+            guard let meta = (connection.metadata(definition: NWProtocolTLS.definition) as? NWProtocolTLS.Metadata)?.securityProtocolMetadata
+            else { return nil }
+            return identities.removeValue(forKey: ObjectIdentifier(meta as AnyObject))?.identity
+        }
+
+        /// A failed handshake's identity (for the log and the pairing failure count). Its
+        /// metadata may be gone; then only an unambiguous guess is made: the single identity
+        /// seen in the last 30 s. With several handshakes in flight it is unknown, so one
+        /// client's failure is never pinned on another.
+        private func claimFailedIdentity(for connection: NWConnection) -> String? {
             if let meta = (connection.metadata(definition: NWProtocolTLS.definition) as? NWProtocolTLS.Metadata)?.securityProtocolMetadata {
-                let key = ObjectIdentifier(meta as AnyObject)
-                if let entry = identities.removeValue(forKey: key) { return entry.identity }
-                return nil
+                return identities.removeValue(forKey: ObjectIdentifier(meta as AnyObject))?.identity
             }
-            guard let oldest = identities.min(by: { $0.value.at < $1.value.at }) else { return nil }
-            identities[oldest.key] = nil
-            return oldest.value.identity
+            guard identities.count == 1, let only = identities.first else { return nil }
+            identities[only.key] = nil
+            return only.value.identity
         }
 
         // MARK: Connections (R6, R12, R12a)
@@ -365,7 +396,7 @@ extension HubListener {
                     self.ready(conn)
                 case .failed(let error), .waiting(let error):
                     if conn.caller == nil {
-                        let identity = self.claimIdentity(for: connection)
+                        let identity = self.claimFailedIdentity(for: connection)
                         if case .tls = error {
                             Self.logger.notice("Hub handshake failed for \(identity ?? "unknown", privacy: .public): \(String(describing: error), privacy: .public)")
                             if identity == HubProtocol.pairIdentity { self.keyring.window.handshakeFailed() }
@@ -385,6 +416,13 @@ extension HubListener {
 
         private func ready(_ conn: Conn) {
             guard let identity = claimIdentity(for: conn.connection) else {
+                conn.connection.cancel()
+                return
+            }
+            // The selection block checked the identity when the handshake began; it may have
+            // been removed since (Remove, Forget) or the pairing window closed. Check again.
+            guard keyring.allows(identity) else {
+                Self.logger.notice("Hub: \(identity, privacy: .public) no longer allowed; closing")
                 conn.connection.cancel()
                 return
             }
@@ -439,12 +477,17 @@ extension HubListener {
                 guard let parsed = try HTTPCodec.parseRequest(&conn.buffer) else { return }
                 request = parsed
             } catch {
+                // Mark the connection busy so pipelined bytes behind the bad request don't
+                // each get their own 400 before the close lands.
+                conn.task = Task {}
+                conn.buffer = Data()
                 send(HTTPResponse(status: error.status, headers: ["connection": "close"]), on: conn, close: true)
                 return
             }
             let now = Date()
             conn.recent = conn.recent.filter { now.timeIntervalSince($0) < 1 }
             if conn.recent.count >= HubProtocol.maxRequestsPerSecond {
+                conn.task = Task {}  // keep responses in order: the next request waits for this send
                 send(HTTPResponse(status: 429), on: conn, close: false)
                 return
             }
@@ -513,6 +556,7 @@ extension HubListener {
 /// A once-only flag for callbacks on one serial queue.
 final class Flag: @unchecked Sendable {
     private var value = false
+    var isSet: Bool { value }
     /// Sets the flag; returns `true` only the first time.
     func set() -> Bool {
         if value { return false }

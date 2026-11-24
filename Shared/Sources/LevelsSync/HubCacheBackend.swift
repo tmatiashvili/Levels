@@ -21,6 +21,7 @@ public final class HubCacheBackend: HubBackend {
     private let now: @Sendable () -> Date
     private let onChange: @Sendable () -> Void
     private let onSeen: @Sendable (DeviceID) -> Void
+    private let onPairingsChanged: @Sendable () -> Void
     private let listener = Mutex<HubListener?>(nil)
     /// The last snapshot read, served when the cache file can't be read (NET-001 edge case).
     private let lastGood = Mutex<HubSnapshot?>(nil)
@@ -31,10 +32,14 @@ public final class HubCacheBackend: HubBackend {
     ///   - onChange: called after an ingest or remove changed the cache (the app fires its
     ///     change relay, which also fires `signal`).
     ///   - onSeen: called after each authenticated device request (firewall hint, NET-001 R15).
+    ///   - onPairingsChanged: called after a device forgot this Mac (`DELETE /v1/pairing`), so
+    ///     the app re-applies its listener rule (NET-001 R1) and refreshes its paired list.
     public init(local: LocalOnlySyncService, cache: SnapshotCache, reporting: ReportingSetting,
                 store: any HubPairingStore, window: PairingWindow, signal: HubChangeSignal,
                 hub: @escaping @Sendable () -> HubInfo?, now: @escaping @Sendable () -> Date = Date.init,
-                onChange: @escaping @Sendable () -> Void = {}, onSeen: @escaping @Sendable (DeviceID) -> Void = { _ in }) {
+                onChange: @escaping @Sendable () -> Void = {}, onSeen: @escaping @Sendable (DeviceID) -> Void = { _ in },
+                onPairingsChanged: @escaping @Sendable () -> Void = {}) {
+        self.onPairingsChanged = onPairingsChanged
         self.local = local
         self.cache = cache
         self.reporting = reporting
@@ -87,6 +92,9 @@ public final class HubCacheBackend: HubBackend {
         }
         Self.logger.notice("Forgot device \(id.recordName, privacy: .public)")
         await attached?.reload()
+        // The app decides whether the listener should still run (no devices left → stop
+        // advertising) and refreshes its paired list.
+        onPairingsChanged()
     }
 
     public func isPaired(_ id: DeviceID) -> Bool { store.key(for: id) != nil || window.pendingID == id }
@@ -104,8 +112,12 @@ public final class HubCacheBackend: HubBackend {
         Self.logger.notice("Pairing: waiting for the owner to compare the numbers")
         switch await window.decision() {
         case .matched:
-            // The confirming request (R7) uses the new key, so the listener must hold it first.
-            await attached?.reload()
+            // The confirming request (R7) uses the new key, so the listener must hold it first;
+            // a 204 without it would send the device into a handshake that can't succeed.
+            guard let listener = attached, await listener.reload() else {
+                Self.logger.error("Pairing: listener could not load the new key")
+                throw .notReachable
+            }
             Self.logger.notice("Pairing: numbers match; waiting for the device's first request")
         case .cancelled:
             Self.logger.notice("Pairing cancelled on the Mac")
