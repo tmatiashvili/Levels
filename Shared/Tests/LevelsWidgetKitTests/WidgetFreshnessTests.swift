@@ -74,7 +74,7 @@ struct WidgetFreshnessTests {
                                                   selection: nil, fetch: { _ in .failed }, own: reading(41))
         #expect(level(t, phoneID) == 41)
         #expect(level(t, macID) == 90)
-        #expect(t.policy == .after(morning + HubWidgetPlan.afterFailure))
+        #expect(t.policy == .after(morning + HubWidgetPlan.afterFailure))  // last contact 8 h ago
         #expect(t.entries.first?.awayFooterDate != nil)
     }
 
@@ -121,5 +121,98 @@ struct WidgetFreshnessTests {
         #expect(OwnBatteryReading.level(fromFraction: .nan) == nil)
         #expect(OwnBatteryReading.level(fromFraction: 0.415) == 42)
         #expect(OwnBatteryReading.level(fromFraction: 1.2) == 100)
+    }
+
+    // MARK: reload schedule and timeline shape (2026-11-24: 90 min gaps in the hub log)
+
+    @Test func missesRightAfterAGoodFetchRetrySoonThenBackOff() async {
+        // 11:24 good fetch; the 11:54 reload misses the Mac. It used to retry at 12:54.
+        let good = morning
+        let cached = file([phone(80, at: good), mac(90, at: good)], lastFetchAt: good)
+        var retries: [TimelineReloadPolicy] = []
+        for minutes in [30.0, 45, 60, 90, 180] {
+            let t = good + minutes * 60
+            retries.append(await DevicesProvider.hubTimeline(cached: cached, preferences: DisplayPreferences(), now: t,
+                                                             selection: nil, fetch: { _ in .failed }, own: nil).policy)
+        }
+        #expect(retries == [.after(good + 45 * 60), .after(good + 60 * 60), .after(good + 90 * 60),
+                            .after(good + 120 * 60), .after(good + 240 * 60)])
+    }
+
+    @Test func staleMomentsAfterTheReloadDateStayInTheTimeline() async {
+        // WidgetKit often reloads later than asked. The Mac reading (65 min threshold) turns
+        // stale 35 min after the 30 min reload date; that entry must still be there.
+        let cached = file([phone(80, at: morning), mac(90, at: morning)], lastFetchAt: morning)
+        let tl = await DevicesProvider.hubTimeline(cached: cached, preferences: DisplayPreferences(), now: morning,
+                                                   selection: nil, fetch: { _ in Issue.record("no fetch"); return .failed },
+                                                   own: nil)
+        #expect(tl.policy == .after(morning + HubWidgetPlan.afterSuccess))
+        let dates = tl.entries.map(\.date)
+        #expect(dates.first == morning)
+        #expect(dates.contains(morning + FreshnessRule.macThreshold))
+        #expect(dates.contains(morning + FreshnessRule.handheldThreshold))
+    }
+
+    @Test func aFetchWithOlderDataNeverMovesALevelBack() {
+        // The app's long-poll wrote the Mac at 40 % while the widget's request was in flight;
+        // the widget's answer still says 55 % from earlier. The newer reading stays.
+        var f = file([phone(80, at: morning), mac(40, at: morning)], lastFetchAt: morning + 30)
+        f.mergeFetch([mac(55, at: morning - 300), phone(10, at: morning + 60)], ownID: phoneID, at: morning + 10)
+        #expect(f.devices.first { $0.id == macID }?.level == 40)
+        #expect(f.devices.first { $0.id == phoneID }?.level == 80)  // own record: the local copy wins
+        #expect(f.lastFetchAt == morning + 30)                       // never moves back
+        f.mergeFetch([mac(35, at: morning + 120)], ownID: phoneID, at: morning + 120)
+        #expect(f.devices.first { $0.id == macID }?.level == 35)
+        #expect(f.lastFetchAt == morning + 120)
+        #expect(f.syncStatus == .localOnly)
+    }
+}
+
+@Suite("Widget shared fetch")
+struct SharedFetchTests {
+    final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        func hit() -> Int { lock.withLock { n += 1; return n } }
+        var value: Int { lock.withLock { n } }
+    }
+
+    final class Clock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var t = Date(timeIntervalSince1970: 1_800_000_000)
+        var now: Date { lock.withLock { t } }
+        func advance(_ s: TimeInterval) { lock.withLock { t += s } }
+    }
+
+    @Test func concurrentCallersShareOneRun() async {
+        let runs = Counter()
+        let shared = SharedFetch<Int>(reuseFor: 60)
+        let results = await withTaskGroup(of: Int.self) { group in
+            for _ in 0..<5 {
+                group.addTask {
+                    await shared.run {
+                        let n = runs.hit()
+                        try? await Task.sleep(for: .milliseconds(200))
+                        return n
+                    }
+                }
+            }
+            return await group.reduce(into: [Int]()) { $0.append($1) }
+        }
+        #expect(runs.value == 1)
+        #expect(results == [1, 1, 1, 1, 1])
+    }
+
+    @Test func aResultIsReusedOnlyInsideTheWindow() async {
+        let runs = Counter()
+        let clock = Clock()
+        let shared = SharedFetch<Int>(reuseFor: 60, now: { clock.now })
+        #expect(await shared.run { runs.hit() } == 1)
+        clock.advance(59)
+        #expect(await shared.run { runs.hit() } == 1)
+        clock.advance(2)
+        #expect(await shared.run { runs.hit() } == 2)
+        clock.advance(-3600)  // clock moved back: don't trust the old result
+        #expect(await shared.run { runs.hit() } == 3)
     }
 }
