@@ -110,6 +110,20 @@ struct TLSLoopbackTests {
         await rig.listener.stop()
     }
 
+    /// `reload()` reports whether the listener runs with the current keys, so the app never
+    /// shows "sharing" (or answers a pairing confirm) while it is down.
+    @Test func reloadReportsWhetherTheListenerRuns() async throws {
+        let rig = try await rig()
+        #expect(await rig.listener.reload())
+        let newID = DeviceID(UUID())
+        try rig.store.save(PairedClient(id: newID, name: "iPad", kind: .iphone, key: Data(repeating: 3, count: 32), pairedAt: t0))
+        #expect(await rig.listener.reload())  // rebuilt with the new key
+        let c = try await connect(rig, identity: newID.recordName, key: SymmetricKey(data: Data(repeating: 3, count: 32))).get()
+        c.close()
+        await rig.listener.stop()
+        #expect(await rig.listener.reload() == false)
+    }
+
     @Test func R6_malformedRequestGets400AndCloses() async throws {
         let rig = try await rig()
         let c = try await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).get()

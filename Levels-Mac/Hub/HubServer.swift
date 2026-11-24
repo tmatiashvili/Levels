@@ -5,6 +5,7 @@ import Foundation
 import LevelsModel
 import LevelsNet
 import LevelsSync
+import Network
 import Observation
 import os
 
@@ -20,7 +21,8 @@ import os
         case notPaired
         case starting
         case sharing
-        /// The listener failed twice (edge case: retry once after 5 s, then this).
+        /// The listener failed and its first retry failed too. It keeps retrying with backoff
+        /// (and at once when the network path changes); Retry tries now.
         case failed
     }
 
@@ -52,7 +54,11 @@ import os
     @ObservationIgnored let window: PairingWindow
     @ObservationIgnored private let listener: HubListener
     @ObservationIgnored private let hubIDBox: HubIDBox
-    @ObservationIgnored private var retried = false
+    /// Consecutive failed starts; 0 after a start succeeds.
+    @ObservationIgnored private var failures = 0
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
+    @ObservationIgnored private let pathMonitor = NWPathMonitor()
+    @ObservationIgnored private var lastPath: NWPath.Status?
     @ObservationIgnored private var expiryTask: Task<Void, Never>?
     @ObservationIgnored private var evaluating = false
     @ObservationIgnored private var evaluateAgain = false
@@ -81,9 +87,10 @@ import os
             guard let id = try? identity.currentDeviceID() else { return nil }
             return HubInfo(hubID: hubIDBox.value, hubDeviceID: id, hubName: hubName())
         }
-        let backend = HubCacheBackend(local: local, cache: cache, reporting: reporting, store: store, window: window,
-                                      signal: signal, hub: hubInfo, onChange: onChange)
         let events = EventRelay()
+        let backend = HubCacheBackend(local: local, cache: cache, reporting: reporting, store: store, window: window,
+                                      signal: signal, hub: hubInfo, onChange: onChange,
+                                      onPairingsChanged: { events.pairingsChanged() })
         listener = HubListener(router: HubRouter(backend: backend), keyring: HubKeyring(store: store, window: window),
                                advertise: {
                                    HubListener.Advertisement(tag: HubProtocol.tag(for: hubIDBox.value), pairing: window.isOpen)
@@ -92,7 +99,14 @@ import os
         backend.attach(listener)
         paired = store.all()
         events.set { [weak self] event in Task { @MainActor in self?.handle(event) } }
+        // DELETE /v1/pairing (a device forgot this Mac): re-apply R1 and refresh the list.
+        events.setPairingsChanged { [weak self] in Task { @MainActor in await self?.evaluate() } }
         window.setObserver { [weak self] in Task { @MainActor in await self?.windowChanged() } }
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let status = path.status
+            Task { @MainActor in self?.pathChanged(status) }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "levels.hub.path"))
     }
 
     private static func loadHubID(_ defaults: UserDefaults) -> UUID {
@@ -122,12 +136,17 @@ import os
         let running = await listener.isRunning
         if shouldRun {
             if running {
-                await listener.reload()
-                status = .sharing
-            } else if status != .failed || window.isInProgress {
+                if await listener.reload() {
+                    status = .sharing
+                } else {
+                    // The rebuild failed and the listener is down: don't claim sharing.
+                    await startFailed()
+                }
+            } else if retryTask == nil || window.isInProgress {
                 await startListener()
             }
         } else {
+            cancelRetry()
             if running {
                 await listener.stop()
                 Self.logger.notice("Hub listener stopped")
@@ -141,32 +160,65 @@ import os
         status = .starting
         do {
             let port = try await listener.start()
-            retried = false
+            failures = 0
+            cancelRetry()
             status = .sharing
             Self.logger.notice("Hub sharing as \(HubProtocol.serviceName(tag: self.tag), privacy: .public) on port \(port, privacy: .public)")
         } catch {
             Self.logger.error("Hub listener start failed: \(String(describing: error), privacy: .public)")
-            await failedOnce()
+            await startFailed()
         }
     }
 
-    /// Edge case: retry once after 5 s; then "Couldn't start sharing" with Retry. No loop.
-    private func failedOnce() async {
-        guard !retried else {
-            status = .failed
-            return
+    /// Backoff between retries: 5 s, 15 s, 1 min, then every 5 min.
+    static func retryDelay(afterFailures n: Int) -> Duration {
+        switch n {
+        case ...1: .seconds(5)
+        case 2: .seconds(15)
+        case 3: .seconds(60)
+        default: .seconds(300)
         }
-        retried = true
-        status = .starting
-        try? await Task.sleep(for: .seconds(5))
-        await startListener()
+    }
+
+    /// The listener could not start (or a running one failed). The first failure shows
+    /// "Starting…" and retries after 5 s; after that the status is "Couldn't start sharing"
+    /// (with Retry) while retries continue with backoff, and a network path change retries at once.
+    private func startFailed() async {
+        failures += 1
+        status = failures == 1 ? .starting : .failed
+        scheduleRetry(after: Self.retryDelay(afterFailures: failures))
+    }
+
+    private func scheduleRetry(after delay: Duration) {
+        retryTask?.cancel()
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.retryTask = nil
+            await self.evaluate()  // re-checks R1 first: no restart if sharing was turned off meanwhile
+        }
+    }
+
+    private func cancelRetry() {
+        retryTask?.cancel()
+        retryTask = nil
+    }
+
+    /// A network change (Wi-Fi back, another interface) is the likeliest moment a failed
+    /// start can succeed.
+    private func pathChanged(_ path: NWPath.Status) {
+        defer { lastPath = path }
+        guard lastPath != nil, path != lastPath, path == .satisfied, retryTask != nil else { return }
+        Self.logger.notice("Network path changed; retrying the hub listener now")
+        cancelRetry()
+        Task { await evaluate() }
     }
 
     /// The Retry button.
     func retry() {
-        retried = false
+        cancelRetry()
         status = .starting
-        Task { await startListener() }
+        Task { await evaluate() }
     }
 
     private func handle(_ event: HubListener.Event) {
@@ -179,8 +231,15 @@ import os
                 defaults.set(now, forKey: Self.lastHandshakeKey)
                 paired = store.all()
             }
+        case .ready:
+            // Also after a running listener came back from `.waiting`.
+            if status == .starting || status == .failed, retryTask == nil { status = .sharing }
+        case .waiting(let reason):
+            // Network.framework brings it back by itself; keep the listener (no Retry needed).
+            Self.logger.notice("Hub listener waiting for the network: \(reason, privacy: .public)")
         case .failed:
-            Task { await failedOnce() }
+            // A running listener failed for good: restart with backoff.
+            Task { await startFailed() }
         default: break
         }
     }
@@ -194,7 +253,8 @@ import os
             Self.logger.error("Pairing: device ID unavailable")
             return nil
         }
-        retried = false
+        failures = 0
+        cancelRetry()  // the window change re-evaluates and starts the listener now
         if status == .failed { status = .starting }
         let code = window.open(hub: HubInfo(hubID: hubIDBox.value, hubDeviceID: id, hubName: hubName()))
         Self.logger.notice("Pairing window opened for \(HubProtocol.serviceName(tag: self.tag), privacy: .public)")
@@ -274,6 +334,9 @@ final class HubIDBox: Sendable {
 /// Late-bound listener events: the listener is built before `self` can be captured.
 final class EventRelay: Sendable {
     private let handler = OSAllocatedUnfairLock<(@Sendable (HubListener.Event) -> Void)?>(initialState: nil)
+    private let pairings = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
     func set(_ h: @escaping @Sendable (HubListener.Event) -> Void) { handler.withLock { $0 = h } }
     func send(_ e: HubListener.Event) { handler.withLock { $0 }?(e) }
+    func setPairingsChanged(_ h: @escaping @Sendable () -> Void) { pairings.withLock { $0 = h } }
+    func pairingsChanged() { pairings.withLock { $0 }?() }
 }

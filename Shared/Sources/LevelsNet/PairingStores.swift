@@ -179,37 +179,43 @@ public final class KeychainHubPairingStore: HubPairingStore {
         self.items = items
     }
 
-    private func loaded() -> [DeviceID: PairedClient] {
+    /// The cached items, read from the Keychain the first time. Throws when that read fails
+    /// (before first unlock, a Keychain error); nothing is cached then, so the next call tries again.
+    private func load() throws -> [DeviceID: PairedClient] {
         if let c = cache.withLock({ $0 }) { return c }
         var out: [DeviceID: PairedClient] = [:]
-        do {
-            for (account, data) in try items.readAll(service: service) {
-                guard let id = DeviceID(recordName: account),
-                      let client = try? storeDecoder().decode(PairedClient.self, from: data), client.id == id
-                else { continue }
-                out[id] = client
-            }
-        } catch {
-            // Before first unlock or a Keychain error: no keys now; try again next time.
-            storeLogger.error("Hub pairing read failed: \(String(describing: error), privacy: .public)")
-            return [:]
+        for (account, data) in try items.readAll(service: service) {
+            guard let id = DeviceID(recordName: account),
+                  let client = try? storeDecoder().decode(PairedClient.self, from: data), client.id == id
+            else { continue }
+            out[id] = client
         }
         cache.withLock { $0 = out }
         return out
     }
 
+    /// For reads: no keys while the Keychain can't be read.
+    private func loaded() -> [DeviceID: PairedClient] {
+        do { return try load() } catch {
+            storeLogger.error("Hub pairing read failed: \(String(describing: error), privacy: .public)")
+            return [:]
+        }
+    }
+
     public func key(for id: DeviceID) -> SymmetricKey? { loaded()[id]?.symmetricKey }
     public func all() -> [PairedClient] { loaded().values.sorted { $0.pairedAt < $1.pairedAt } }
 
+    /// Writes load the full set first and throw when they can't: an unreadable Keychain must
+    /// not become an authoritative empty cache that hides the other devices' keys.
     public func save(_ client: PairedClient) throws {
-        var all = loaded()
+        var all = try load()
         try items.write(service: service, account: client.id.recordName, data: storeEncoder().encode(client))
         all[client.id] = client
         cache.withLock { $0 = all }
     }
 
     public func remove(_ id: DeviceID) throws {
-        var all = loaded()
+        var all = try load()
         try items.delete(service: service, account: id.recordName)
         all[id] = nil
         cache.withLock { $0 = all }
@@ -221,7 +227,7 @@ public final class KeychainHubPairingStore: HubPairingStore {
     }
 
     public func touch(_ id: DeviceID, at date: Date) {
-        guard var client = loaded()[id] else { return }
+        guard var client = (try? load())?[id] else { return }  // unreadable: skip, never overwrite
         if let last = client.lastSeenAt, date.timeIntervalSince(last) < touchInterval { return }
         client.lastSeenAt = date
         do { try save(client) } catch {

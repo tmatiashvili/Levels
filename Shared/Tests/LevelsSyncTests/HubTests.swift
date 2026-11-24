@@ -105,12 +105,22 @@ struct HubLoopbackTests {
         let listener: HubListener
         let signal = HubChangeSignal()
         let info = HubInfo(hubID: hubUUID, hubDeviceID: hubMacID, hubName: "Office Mac")
+        /// How often the backend asked the app to re-apply its listener rule.
+        let pairingsChanged = Counter()
+
+        final class Counter: Sendable {
+            private let m = Mutex(0)
+            func increment() { m.withLock { $0 += 1 } }
+            var value: Int { m.withLock { $0 } }
+        }
 
         init() {
             window = PairingWindow(store: store)
             local = LocalOnlySyncService(cache: cache, reporting: reporting, widgetReloader: {})
+            let counter = pairingsChanged
             backend = HubCacheBackend(local: local, cache: cache, reporting: reporting, store: store, window: window,
-                                      signal: signal, hub: { [info] in info })
+                                      signal: signal, hub: { [info] in info },
+                                      onPairingsChanged: { counter.increment() })
             listener = HubListener(router: HubRouter(backend: backend), keyring: HubKeyring(store: store, window: window),
                                    loopbackOnly: true)
             backend.attach(listener)
@@ -230,9 +240,12 @@ struct HubLoopbackTests {
         let pairing = try await pair(mac, port: port, code: code)
         let phoneStore = InMemoryClientPairingStore(pairing)
         let client = HubClient(transport: NWHubTransport(locator: FixedHubLocator(loopbackPort: port)), pairing: phoneStore, me: hubPhoneID)
+        #expect(mac.pairingsChanged.value == 0)
         #expect(await client.forget())  // DELETE /v1/pairing
         #expect(phoneStore.current() == nil)
         #expect(mac.store.all().isEmpty)
+        // The app hears of it, so it can stop advertising with no device left (NET-001 R1).
+        #expect(mac.pairingsChanged.value == 1)
         await mac.listener.stop()
     }
 
