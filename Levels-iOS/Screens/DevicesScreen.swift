@@ -16,10 +16,11 @@ struct DevicesScreen: View {
                 .refreshable { await store.refresh() }  // R2: `.userRefresh`, spinner ends within 15 s
                 .safeAreaInset(edge: .top) {
                     if store.state == .notPaired {  // NET-004 R1
-                        ConnectMacCard { model.showsConnect = true }
+                        ConnectMacCard(onConnect: { model.showsConnect = true },
+                                       onTrySamples: { model.enterDemo() })  // DEMO-001 R1
                             .padding(.horizontal)
                             .padding(.bottom, 8)
-                    } else if model.showsShortcutsHint() {  // RPT-002 R8
+                    } else if !model.isDemo, model.showsShortcutsHint() {  // RPT-002 R8
                         ShortcutsHintCard(onShowGuide: { showsGuide = true },
                                           onDismiss: { withAnimation { model.hintDismissed = true } })
                             .padding(.horizontal)
@@ -38,11 +39,18 @@ struct DevicesScreen: View {
                     DeviceDetailScreen(id: id)
                 }
         }
+        .safeAreaInset(edge: .bottom) {  // DEMO-001 R3: on the list and every detail screen
+            if model.isDemo {
+                SampleDevicesBanner { Task { await model.exitDemo() } }
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
+            }
+        }
         .sheet(isPresented: $model.showsSettings) {
             SettingsSheet()
         }
         .sheet(isPresented: $model.showsConnect) {  // NET-004 R2, R3
-            ConnectMacFlowView(flow: model.makeConnectFlow())
+            ConnectMacFlowView(flow: model.makeConnectFlow(), onTrySamples: { model.enterDemo() })
         }
         .sheet(isPresented: $showsGuide) {
             NavigationStack { ShortcutsGuideView(showsDone: true) }

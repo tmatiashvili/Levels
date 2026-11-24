@@ -32,6 +32,7 @@ struct SettingsSheet: View {
                 }
 
                 MacSettingsSection()
+                SampleDevicesSettingsSection()  // DEMO-001 R3
 
                 Section {
                     NavigationLink {

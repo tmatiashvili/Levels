@@ -168,12 +168,16 @@ public struct DevicesProvider: AppIntentTimelineProvider {
 
     static func cached() -> (SnapshotFile?, DisplayPreferences) {
         let group = LevelsAppConfig.appGroupID
+        if let demo = demoSnapshot(appGroupID: group, now: .now) { return (demo, DisplayPreferences()) }  // DEMO-001 R10
         let snapshot = group.flatMap(SnapshotCache.init(appGroupID:))?.read()
         return (snapshot, UserDefaultsDisplayPreferencesStore(suiteName: group).load())
     }
 
     static func load(now: Date, selection: DeviceID? = nil) -> [DeviceEntry] {
         let group = LevelsAppConfig.appGroupID
+        if let demo = demoSnapshot(appGroupID: group, now: now) {  // DEMO-001 R10
+            return DemoWidgetPlan.timeline(snapshot: demo, now: now, selection: selection).entries
+        }
         let snapshot = group.flatMap(SnapshotCache.init(appGroupID:))?.read()
         let prefs = UserDefaultsDisplayPreferencesStore(suiteName: group).load()
         return DevicesTimeline.entries(snapshot: snapshot, preferences: prefs, now: now, selection: selection)
@@ -188,6 +192,9 @@ public struct DevicesProvider: AppIntentTimelineProvider {
     public func timeline(for configuration: SelectDeviceIntent, in context: Context) async -> Timeline<DeviceEntry> {
         let now = Date()
         let selection = configuration.device?.deviceID
+        if let demo = Self.demoSnapshot(appGroupID: LevelsAppConfig.appGroupID, now: now) {  // DEMO-001 R10: no fetch
+            return DemoWidgetPlan.timeline(snapshot: demo, now: now, selection: selection)
+        }
         guard let fetch else {
             let entries = Self.load(now: now, selection: selection)
             return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
@@ -337,7 +344,9 @@ struct MediumDevicesView: View {
                 }
             }
             Spacer(minLength: 0)
-            if let away = entry.awayFooterDate {
+            if entry.isSample {
+                SampleDevicesFooter()  // DEMO-001 R10
+            } else if let away = entry.awayFooterDate {
                 AwayFooter(lastContact: away)
             } else if entry.isOnlyThisDevice {
                 OnlyThisDeviceHint()
@@ -417,7 +426,11 @@ public struct LargeDevicesView: View {
                 OnlyThisDeviceHint().padding(.top, 6)  // NET-004 R12
             }
             Spacer(minLength: 0)
-            if let away = entry.awayFooterDate { AwayFooter(lastContact: away) }
+            if entry.isSample {
+                SampleDevicesFooter()  // DEMO-001 R10
+            } else if let away = entry.awayFooterDate {
+                AwayFooter(lastContact: away)
+            }
         }
         .widgetURL(LevelsAppConfig.listURL)  // taps outside a row open the list
     }

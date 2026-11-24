@@ -78,6 +78,7 @@ Launch needs many small things done in the right order, most of them outside the
 - **R12** **Review notes.** App Review has no Mac running Levels. The notes say:
   - "Levels shows the battery of the user's Apple devices. The iPhone app gets the Mac's and accessories' levels from the free Levels Mac app on the same Wi-Fi (download: <URL>), or from iCloud when both are signed in to the same Apple Account."
   - "Without a Mac, the app shows this iPhone's battery, the small widget, and the Levels Pro paywall. Tap a locked row or Settings ▸ Levels Pro to see it."
+  - "To see the app with a Mac and accessories, tap Try with sample devices on the first screen" (demo mode, [DEMO-001](DEMO-001-sample-devices-mode.md)).
   - "Local Network access is used only to reach the user's own Mac."
   - A link to a short screen recording of pairing and Pro features (unlisted video).
   - No sign-in is needed, so no demo account.
@@ -105,7 +106,7 @@ Launch needs many small things done in the right order, most of them outside the
 - The app name is taken: choose at R3; the bundle ID doesn't change.
 - Upload rejected for a missing required-reason declaration: fix the manifest from the privacy report (R5).
 - Products stuck in "Missing Metadata": usually the review screenshot or the agreement (R2, R4).
-- App Review asks for a working demo of Pro without a Mac: the recording (R12); if not enough, a debug-free "sample devices" mode is a new owner decision, not built by default.
+- App Review asks for a working demo of Pro without a Mac: demo mode ([DEMO-001](DEMO-001-sample-devices-mode.md), lead's call 36) and the recording (R12).
 - Notarization fails: `xcrun notarytool log <id>` shows why; most often an unsigned nested binary or the Hardened Runtime missing.
 - The Developer ID profile is missing: the Mac app won't launch on other Macs (ADR-0013 facts).
 

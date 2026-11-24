@@ -8,7 +8,7 @@ How Levels ships (ADR-0022): the iPhone app (with its widget) through the App St
 >
 > Before the first submission, do both of these:
 >
-> 1. **Add a demo mode** (recommended; not built, and REL-001 says it needs an owner decision first). A "Try with sample devices" button on the Connect card (a button, not a launch argument: App Review can't pass arguments) that fills the list with sample devices: a MacBook, AirPods with left, right and case, an Apple Watch. The pieces exist: `InMemorySnapshotSource` and `PreviewFixtures` in LevelsUI. Show the widget with the same data while demo mode is on. Mark it clearly ("Sample data") and turn it off when a real Mac pairs. If the app has a paywall, the paywall must be reachable and purchasable in demo mode too.
+> 1. **Demo mode** (built: [DEMO-001](specs/DEMO-001-sample-devices-mode.md), lead's call 36). A **Try with sample devices** button on the "Connect to your Mac" card and on the Connect screen fills the list with sample devices (iPhone, MacBook Pro, AirPods Pro with left, right and case, a stale Apple Watch, a low iPad), with a "Sample devices" banner and **Exit** on every screen. The widget shows the same data while demo mode is on. It never touches the real data or the network, ends when a real Mac pairs, and Levels Pro gating applies as usual, so the paywall is reachable and purchasable in demo mode too. Check it on a fresh install before submitting.
 > 2. **Write review notes** (template below) with a link to the notarized Mac download, the exact pairing steps, and a short screen recording of pairing on real hardware. Attach the recording in App Store Connect under App Review Information.
 
 ## Done on this branch
@@ -84,7 +84,7 @@ Do these in order after enrolling.
 - [ ] Privacy policy URL (required even when no data is collected) and support URL.
 - [ ] Age rating questionnaire (no objectionable content, so 4+).
 - [ ] Export compliance: answered by `ITSAppUsesNonExemptEncryption = NO`; App Store Connect won't ask.
-- [ ] Screenshots: 6.9" iPhone at least (1320 × 2868), one set. Use realistic data: Mac, AirPods, Watch, this iPhone, plus a home-screen widget. If demo mode exists, take them from it so the store matches what a reviewer sees.
+- [ ] Screenshots: 6.9" iPhone at least (1320 × 2868), one set. Use realistic data: Mac, AirPods, Watch, this iPhone, plus a home-screen widget. Take them in demo mode so the store matches what a reviewer sees.
 - [ ] Description, keywords, promotional text, "What's New".
 - [ ] `scripts/archive-ios.sh --build-number 1 --upload`, then test with TestFlight on a real iPhone paired to the notarized Mac build.
 - [ ] App Review Information: contact, notes (below), the pairing recording. No sign-in, so no demo account.
@@ -93,7 +93,7 @@ Do these in order after enrolling.
 
 > Levels shows the battery levels of your own Apple devices in one place. The iPhone app shows this iPhone's battery right away. To see a Mac's battery and the AirPods connected to it, the iPhone pairs with the free Levels app for Mac, which is distributed outside the Mac App Store because it reads accessory batteries with a system tool the sandbox does not allow.
 >
-> To test without a Mac: tap **Try with sample devices** on the "Connect to your Mac" card. *(Only if demo mode is built.)*
+> To test without a Mac: on the first screen, tap **Try with sample devices** on the "Connect to your Mac" card (it is also on the Connect screen). Levels then shows sample devices: a MacBook Pro, AirPods Pro with left, right and case, an Apple Watch that hasn't reported for a while and an iPad with a low battery. A "Sample devices" bar at the bottom says so; tap **Exit** there (or in Settings) to leave. Tap any device for its details. Add the Levels widget to the Home Screen to see the same sample devices there. Without Levels Pro, devices beyond this iPhone and one Mac show as a locked card; tap it to open the Levels Pro purchase screen, which works in demo mode. Sample devices are never saved, never sent anywhere and never mixed with real data.
 >
 > To test with a Mac (macOS 26 or later, same Wi-Fi as the iPhone, a network that allows Bonjour/mDNS; a phone hotspot works):
 > 1. Download Levels for Mac from <URL> and open it. Its icon appears in the menu bar.

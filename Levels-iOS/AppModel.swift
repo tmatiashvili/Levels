@@ -22,7 +22,14 @@ import os
     /// One per process, shared by the scene and the App Intent (RPT-001 Design, RPT-002).
     static let shared = AppModel()
 
-    let store: DeviceListStore
+    /// The real list (hub mode). ``store`` is the list on screen: the demo list while demo
+    /// mode is on (DEMO-001), else this one.
+    let realStore: DeviceListStore
+    var store: DeviceListStore { isDemo ? (demoStore ?? realStore) : realStore }
+    /// DEMO-001 R7: "Try with sample devices" is on (App Group flag, survives relaunch).
+    var isDemo: Bool
+    /// DEMO-001: the sample-devices list while demo mode is on (AppModel+Demo.swift).
+    var demoStore: DeviceListStore? = nil
     /// UI-002 R9: the detail a `levels://device/<uuid>` URL asked for.
     var path: [DeviceID] = []
     /// `levels://settings`.
@@ -47,7 +54,9 @@ import os
     @ObservationIgnored private let preferences: UserDefaultsDisplayPreferencesStore
     @ObservationIgnored private let sync: any BatterySyncing
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
-    @ObservationIgnored private var isActive = false
+    @ObservationIgnored var isActive = false
+    @ObservationIgnored let demoMode: DemoModeSetting
+    @ObservationIgnored var demoTask: Task<Void, Never>?
     @ObservationIgnored private let reporting: ReportingSetting
     @ObservationIgnored private let identity: any DeviceIdentityProviding
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
@@ -69,6 +78,7 @@ import os
         hintDismissed = groupDefaults.bool(forKey: ShortcutsHint.dismissedKey)
         let preferences = UserDefaultsDisplayPreferencesStore(suiteName: group)
         let reporting = ReportingSetting(suiteName: group)  // SYNC-001 R15a, survives relaunch
+        let demoMode = DemoModeSetting(suiteName: group)  // DEMO-001 R7
         let relay = ChangeRelay()
         let outbox = HubOutbox()  // NET-003 R2
         let local = LocalOnlySyncService(cache: cache, reporting: reporting, widgetReloader: {
@@ -84,7 +94,9 @@ import os
         let hub = LocalNetworkSyncService(local: local, outbox: outbox, transport: NWHubTransport(),
                                           pairing: pairingStore, identity: identity, cache: cache, etagSuite: group,
                                           onChange: { relay.fire() })
-        let sync = LoggingSync(base: hub, cacheURL: cache.fileURL, onReport: { relay.fire() })
+        // DEMO-001 R6: while demo mode is on, reports and refreshes go to DemoSyncService instead.
+        let sync = LoggingSync(base: DemoAwareSync(real: hub, mode: demoMode), cacheURL: cache.fileURL,
+                               onReport: { relay.fire() })
         let log = ReportLog(suiteName: group)  // RPT-001 R10: rpt.lastReport
         let reporter = BatteryReporter(reader: UIDeviceBatteryReader(), sync: sync, kind: .iphone,
                                        identity: identity, preferences: preferences, log: log, reporting: reporting)
@@ -106,8 +118,11 @@ import os
         self.identity = identity
         self.reporter = reporter
         self.reportLog = log
-        store = DeviceListStore(source: source, preferences: preferences, isHubMode: true)
+        realStore = DeviceListStore(source: source, preferences: preferences, isHubMode: true)
+        self.demoMode = demoMode
+        isDemo = demoMode.isOn
         pairedMac = pairingStore.current()
+        configureStore(realStore, isDemo: false)
     }
 
     /// Launch (RPT-001 R4, R5). Runs once per process, when the first scene appears.
@@ -121,13 +136,14 @@ import os
         } catch {
             Self.logger.error("Device ID lookup failed: \(String(describing: error), privacy: .public)")
         }
-        tasks.append(Task { await self.store.start() })
+        tasks.append(Task { await self.realStore.start() })
+        if isDemo { startDemoStore() }  // DEMO-001 R7: relaunched in demo mode
         if reporting.isEnabled {
             await reporter.start()  // `.launch`, then UIDevice change events while running (R4, R5)
         } else {
             Self.logger.notice("Reporting is off (Remove all my data); reporter not started")
         }
-        await hub.refresh(.launch)  // NET-003 R6
+        if !isDemo { await hub.refresh(.launch) }  // NET-003 R6; DEMO-001 R5: no network in demo mode
         await refreshPairingState()
         startPathMonitor()
     }
@@ -138,7 +154,7 @@ import os
         isActive = true
         Task {
             await store.refreshOnForeground()  // reports, then `hub.refresh(.foreground)`
-            if isActive { await hub.startLiveUpdates() }
+            if isActive, !isDemo { await hub.startLiveUpdates() }  // DEMO-001 R5
             await refreshPairingState()
         }
         WidgetCenter.shared.reloadAllTimelines()  // free while in the foreground (ADR-0017)
@@ -161,10 +177,10 @@ import os
     /// expires it.
     nonisolated func backgroundRefresh() async {
         Self.logger.notice("Background refresh started")
-        let (reporter, hub) = await MainActor.run { (self.reporter, self.hub) }
+        let (reporter, hub, demoMode) = await MainActor.run { (self.reporter, self.hub, self.demoMode) }
         let finished = await Self.within(.seconds(20)) {
             await reporter.report(reason: .backgroundRefresh)
-            await hub.refresh(.backgroundRefresh)
+            if !demoMode.isOn { await hub.refresh(.backgroundRefresh) }  // DEMO-001 R5
         }
         BackgroundRefresh.schedule()
         Self.logger.notice("Background refresh finished\(finished ? "" : " (20 s limit)", privacy: .public)\(Task.isCancelled ? " (expired)" : "", privacy: .public)")
@@ -202,6 +218,7 @@ import os
     }
 
     private func didPair() async {
+        if isDemo { await exitDemo() }  // DEMO-001 R8: a real Mac ends demo mode
         Self.logger.notice("Paired with hub \(self.pairingStore.current()?.hubTag ?? "?", privacy: .public)")
         await hub.didPair()
         if isActive { await hub.startLiveUpdates() }
@@ -225,11 +242,11 @@ import os
     private func startPathMonitor() {
         let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
         let wasSatisfied = PathFlag()
-        let hub = hub
+        let hub = hub, demoMode = demoMode
         monitor.pathUpdateHandler = { path in
             let now = path.status == .satisfied
             let before = wasSatisfied.swap(now)
-            if now, before == false {
+            if now, before == false, !demoMode.isOn {  // DEMO-001 R5
                 Self.logger.notice("Wi-Fi reachable; refreshing from the Mac")
                 Task { await hub.refresh(.networkReachable) }
             }

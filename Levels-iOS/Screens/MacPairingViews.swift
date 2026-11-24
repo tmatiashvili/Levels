@@ -8,6 +8,8 @@ import UIKit
 /// R1: replaces the device list while not paired; this iPhone's row shows below it.
 struct ConnectMacCard: View {
     let onConnect: () -> Void
+    /// DEMO-001 R1: "Try with sample devices".
+    var onTrySamples: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -20,8 +22,14 @@ struct ConnectMacCard: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Connect", action: onConnect)
-                .buttonStyle(.borderedProminent)
+            HStack(spacing: 8) {
+                Button("Connect", action: onConnect)
+                    .buttonStyle(.borderedProminent)
+                if let onTrySamples {
+                    Button("Try with sample devices", action: onTrySamples)
+                        .buttonStyle(.bordered)
+                }
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -33,6 +41,8 @@ struct ConnectMacCard: View {
 /// R2, R3 and the two-sided number comparison (NET-002 R6a, R6b; see ``MacPairer``).
 struct ConnectMacFlowView: View {
     @State var flow: ConnectMacFlowModel
+    /// DEMO-001 R1: "Try with sample devices" under Continue and below the Mac picker.
+    var onTrySamples: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @FocusState private var codeFocused: Bool
@@ -73,6 +83,10 @@ struct ConnectMacFlowView: View {
                     .multilineTextAlignment(.center)
                 Button("Continue") { flow.continueTapped() }
                     .buttonStyle(.borderedProminent)
+                if let onTrySamples {
+                    Button("Try with sample devices") { flow.stop(); onTrySamples() }
+                        .buttonStyle(.borderless)
+                }
             }
             .padding()
             .frame(maxHeight: .infinity)
@@ -177,6 +191,14 @@ struct ConnectMacFlowView: View {
             Section {
                 Button("Connect") { flow.submit() }
                     .disabled(!flow.canSubmit)
+            }
+
+            if let onTrySamples {
+                Section {
+                    Button("Try with sample devices") { flow.stop(); onTrySamples() }
+                } footer: {
+                    Text("No Mac with Levels nearby? See how the app works with sample devices.")
+                }
             }
         }
         .onAppear { codeFocused = true }
