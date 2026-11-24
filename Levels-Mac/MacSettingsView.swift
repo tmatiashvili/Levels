@@ -15,62 +15,66 @@ struct MacSettingsView: View {
 
     var body: some View {
         let store = model.store
-        Form {
-            Section("This Mac") {
-                TextField("Name of this Mac", text: $name, prompt: Text(DefaultDeviceName.current(kind: .mac)))
-                    .onSubmit { Task { await store.renameThisDevice(to: name) } }
-                    .disabled(store.thisDeviceID == nil)
-            }
-            Section("Menu bar") {
-                Picker("Menu bar shows", selection: $menuBarMode) {
-                    Text("Lowest device").tag(MenuBarMode.lowest)
-                    Text("Icon only").tag(MenuBarMode.iconOnly)
+        // Hidden and old rows say "x minutes ago" as plain text (AgeText): re-render each
+        // minute, like DeviceList. Not the self-updating date text (iOS 26 layout loop).
+        TimelineView(.everyMinute) { context in
+            Form {
+                Section("This Mac") {
+                    TextField("Name of this Mac", text: $name, prompt: Text(DefaultDeviceName.current(kind: .mac)))
+                        .onSubmit { Task { await store.renameThisDevice(to: name) } }
+                        .disabled(store.thisDeviceID == nil)
                 }
-                Toggle("Show in menu bar", isOn: $showMenuBarItem)
-            }
-            Section("Login") {
-                Toggle("Open at login", isOn: Binding(
-                    get: { model.loginItem.isEnabled },
-                    set: { model.loginItem.setEnabled($0) }))
-                if model.loginItem.requiresApproval {  // MAC-001 R4(b)
-                    HStack {
-                        Text("Allow Levels in System Settings → Login Items")
-                            .font(.callout).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Open Login Items") { model.loginItem.openLoginItemsSettings() }
+                Section("Menu bar") {
+                    Picker("Menu bar shows", selection: $menuBarMode) {
+                        Text("Lowest device").tag(MenuBarMode.lowest)
+                        Text("Icon only").tag(MenuBarMode.iconOnly)
+                    }
+                    Toggle("Show in menu bar", isOn: $showMenuBarItem)
+                }
+                Section("Login") {
+                    Toggle("Open at login", isOn: Binding(
+                        get: { model.loginItem.isEnabled },
+                        set: { model.loginItem.setEnabled($0) }))
+                    if model.loginItem.requiresApproval {  // MAC-001 R4(b)
+                        HStack {
+                            Text("Allow Levels in System Settings → Login Items")
+                                .font(.callout).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Open Login Items") { model.loginItem.openLoginItemsSettings() }
+                        }
+                    }
+                    if let error = model.loginItem.lastError {
+                        Text(error).font(.caption).foregroundStyle(.red)
                     }
                 }
-                if let error = model.loginItem.lastError {
-                    Text(error).font(.caption).foregroundStyle(.red)
-                }
-            }
-            AlertsSettingsSection(alerts: model.alerts, store: store)  // ALR-001
-            HubSettingsSection(hub: model.hub)  // NET-001 R14, NET-002
-            Section("Hidden devices") {
-                if store.hiddenRows.isEmpty {
-                    Text("None").foregroundStyle(.secondary)
-                }
-                ForEach(store.hiddenRows) { row in
-                    HStack {
-                        DeviceRow(row: row)
-                        Button("Unhide") { store.setHidden(row.id, false) }.buttonStyle(.borderless)
+                AlertsSettingsSection(alerts: model.alerts, store: store)  // ALR-001
+                HubSettingsSection(hub: model.hub)  // NET-001 R14, NET-002
+                Section("Hidden devices") {
+                    if store.hiddenRows.isEmpty {
+                        Text("None").foregroundStyle(.secondary)
+                    }
+                    ForEach(store.hiddenRows) { row in
+                        HStack {
+                            DeviceRow(row: row, now: context.date)
+                            Button("Unhide") { store.setHidden(row.id, false) }.buttonStyle(.borderless)
+                        }
                     }
                 }
+                if !store.oldRows.isEmpty {
+                    OldDevicesSection(store: store, now: context.date)  // UI-004 R9, UI-002 R11
+                }
+                Section("Data") {
+                    Button("Remove all my data…", role: .destructive) { confirmingRemoveAll = true }
+                    Text("Levels keeps battery data on this Mac only, and shares it only with iPhones you pair on this Wi-Fi. No iCloud, no analytics.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section {
+                    LabeledContent("Version", value: Self.version)
+                    Button("Quit Levels") { NSApp.terminate(nil) }  // MAC-001 R4(d)
+                }
             }
-            if !store.oldRows.isEmpty {
-                OldDevicesSection(store: store)  // UI-004 R9, UI-002 R11
-            }
-            Section("Data") {
-                Button("Remove all my data…", role: .destructive) { confirmingRemoveAll = true }
-                Text("Levels keeps battery data on this Mac only, and shares it only with iPhones you pair on this Wi-Fi. No iCloud, no analytics.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                LabeledContent("Version", value: Self.version)
-                Button("Quit Levels") { NSApp.terminate(nil) }  // MAC-001 R4(d)
-            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
         .frame(width: 460)
         .frame(minHeight: 420)
         .onAppear {

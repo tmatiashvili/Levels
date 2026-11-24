@@ -100,56 +100,7 @@ struct RingMetrics {
     static let large = RingMetrics(diameter: 34, stroke: 3.5, glyph: 15, badge: 14)
 }
 
-/// The state a ring shows as a badge on its edge. A shape, not only a colour: in tinted and
-/// clear (Liquid Glass) styles, StandBy and on the Lock Screen every colour turns white, so
-/// "low" must still read as low (ADR-0016 rule 3, Liquid Glass review 2026-11-24).
-enum RingBadge: Equatable {
-    case charging
-    case low
-
-    static func of(_ row: DeviceRowModel, now: Date) -> RingBadge? {
-        if row.showsChargingBolt(at: now) { return .charging }
-        return row.hasBattery && row.isLow ? .low : nil
-    }
-
-    var symbolName: String {
-        switch self {
-        case .charging: "bolt.circle.fill"
-        case .low: "exclamationmark.circle.fill"
-        }
-    }
-}
-
-/// Colours of one ring for the current rendering mode. Pure, unit-tested.
-///
-/// - `.fullColor` (default and dark Home Screen, Mac desktop in front): green when charging,
-///   red when low, else primary, on a faint track.
-/// - `.accented` (tinted and clear Home Screen, Mac desktop behind windows) and `.vibrant`
-///   (Lock Screen, StandBy): the system draws everything in one colour and keeps only opacity,
-///   so the fill is solid primary in the accent group and the track a fainter primary.
-enum RingStyle: Equatable {
-    case charging, low, normal
-
-    static func of(_ row: DeviceRowModel, now: Date) -> RingStyle {
-        if row.showsChargingBolt(at: now) { return .charging }
-        return row.isLow ? .low : .normal
-    }
-
-    func fill(_ mode: WidgetRenderingMode) -> Color {
-        guard mode == .fullColor else { return .primary }
-        switch self {
-        case .charging: return .green
-        case .low: return .red
-        case .normal: return .primary
-        }
-    }
-
-    /// The track behind the fill. Stronger when the system removed the widget background
-    /// (StandBy, clear glass) or drew the widget in one colour, where `.quaternary` vanishes.
-    static func track(_ mode: WidgetRenderingMode, showsBackground: Bool) -> AnyShapeStyle {
-        mode == .fullColor && showsBackground ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.tertiary)
-    }
-}
+// RingBadge and RingStyle (the colour rules) live in LevelsUI, shared with the app rows.
 
 /// A capacity ring with the device symbol inside and, while charging or low, a badge on the
 /// ring. Tint per ADR-0016 rule 3 in full colour; one colour plus a badge shape in the tinted,

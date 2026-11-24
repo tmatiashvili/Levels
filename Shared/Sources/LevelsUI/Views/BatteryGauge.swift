@@ -1,41 +1,43 @@
 import LevelsModel
 import SwiftUI
-import WidgetKit  // widgetAccentable()
+import WidgetKit  // widgetAccentable(), widgetRenderingMode
 
-/// Gauge tint (ADR-0016 rule 3): green when charging, red when low, else primary.
-func batteryTint(isCharging: Bool, isLow: Bool) -> Color {
-    if isCharging { return .green }
-    if isLow { return .red }
-    return .primary
-}
-
-/// Ring gauge: `Gauge` with `.accessoryCircularCapacity` (ADR-0016 rule 3).
-/// That style always draws at its native ``nativeSize`` and ignores `.frame`, so the ring is
-/// scaled to `size`. No value label inside: the caller shows the percentage next to it.
+/// Capacity ring for the app (ADR-0016 rule 3), coloured by ``RingStyle`` like the widget
+/// rings: green when charging, red when low, else primary, on a faint track.
+///
+/// Drawn by hand rather than with `Gauge(.accessoryCircularCapacity)`: in the apps that style
+/// came out plain grey and white, ignoring `.tint`. No value label inside: the caller shows the
+/// percentage (and "Low") next to it, and dims the ring when stale (UI-001 R6).
 public struct BatteryRing: View {
-    /// The size `.accessoryCircularCapacity` draws at, whatever the frame.
-    public static let nativeSize: CGFloat = 58
-
     let level: Int
     let isCharging: Bool
     let isLow: Bool
     let size: CGFloat
+    @Environment(\.widgetRenderingMode) private var renderingMode
 
-    public init(level: Int, isCharging: Bool, isLow: Bool, size: CGFloat = BatteryRing.nativeSize) {
+    /// `isCharging` must already be false for a stale reading (`showsChargingBolt(at:)`).
+    public init(level: Int, isCharging: Bool, isLow: Bool, size: CGFloat = 58) {
         self.level = DeviceBattery.clampedLevel(level)
         self.isCharging = isCharging
         self.isLow = isLow
         self.size = size
     }
 
+    /// Stroke width for a ring of `size`: about the widget rings' proportion, never a hairline.
+    static func stroke(for size: CGFloat) -> CGFloat { max(2.5, size * 0.11) }
+
     public var body: some View {
-        Gauge(value: Double(level), in: 0...100) {
-            EmptyView()
+        let stroke = Self.stroke(for: size)
+        ZStack {
+            Circle().stroke(RingStyle.track(renderingMode), lineWidth: stroke)
+            Circle()
+                .trim(from: 0, to: CGFloat(level) / 100)
+                .stroke(RingStyle.of(isCharging: isCharging, isLow: isLow).fill(renderingMode),
+                        style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .widgetAccentable()
         }
-        .gaugeStyle(.accessoryCircularCapacity)
-        .tint(batteryTint(isCharging: isCharging, isLow: isLow))
-        .widgetAccentable()
-        .scaleEffect(size / Self.nativeSize)
+        .padding(stroke / 2)
         .frame(width: size, height: size)
         .accessibilityHidden(true)  // the row carries the label (R9)
     }
@@ -59,7 +61,7 @@ public struct BatteryBar: View {
 
     public var body: some View {
         let gauge = Gauge(value: Double(level), in: 0...100) { EmptyView() }
-            .tint(batteryTint(isCharging: isCharging, isLow: isLow))
+            .tint(RingStyle.of(isCharging: isCharging, isLow: isLow).fill())
         Group {
             switch style {
             case .app: gauge.gaugeStyle(.linearCapacity)
