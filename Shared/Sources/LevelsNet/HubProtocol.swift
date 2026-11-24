@@ -21,10 +21,14 @@ public enum HubProtocol {
     public static let pairIdentity = "pair"
     /// At most this many paired devices (NET-002 R11).
     public static let maxPairedDevices = 4
-    /// At most this many open connections (NET-001 R12).
-    public static let maxConnections = 4
-    /// At most this many connections still in the TLS handshake, on top of
-    /// ``maxConnections`` (NET-001 R12a): half-open connections can't take the slots of
+    /// Authenticated connections each paired device may hold at once (NET-001 R12, lead's
+    /// call 31): the app's long-poll, a short POST, and the widget's own fetch.
+    public static let connectionsPerDevice = 3
+    /// Authenticated connections on top of the per-device ones (NET-001 R12): the pairing
+    /// session, a re-pair, a connection still closing after a network change.
+    public static let spareConnections = 3
+    /// At most this many connections still in the TLS handshake, on top of the
+    /// authenticated ones (NET-001 R12a): half-open connections can't take the slots of
     /// authenticated ones.
     public static let maxPendingHandshakes = 3
     /// A connection not through the TLS handshake after this long is closed (NET-001 R12a).

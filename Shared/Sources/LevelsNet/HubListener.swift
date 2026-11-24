@@ -65,25 +65,36 @@ public actor HubListener {
 
     /// The connection limits (NET-001 R6, R12, R12a). Tests shorten them.
     public struct Limits: Sendable, Equatable {
-        /// Authenticated connections.
-        public var maxConnections: Int
-        /// Connections still in the TLS handshake, counted apart from ``maxConnections``.
+        /// Authenticated connections allowed per device that holds a key.
+        public var connectionsPerDevice: Int
+        /// Authenticated connections on top of the per-device ones (pairing session, re-pair).
+        public var spareConnections: Int
+        /// Connections still in the TLS handshake, counted apart from the authenticated ones.
         public var maxPendingHandshakes: Int
         public var handshakeTimeout: Duration
         /// Bytes buffered per connection, also while a request is in flight.
         public var maxBuffered: Int
 
-        public init(maxConnections: Int = HubProtocol.maxConnections,
+        public init(connectionsPerDevice: Int = HubProtocol.connectionsPerDevice,
+                    spareConnections: Int = HubProtocol.spareConnections,
                     maxPendingHandshakes: Int = HubProtocol.maxPendingHandshakes,
                     handshakeTimeout: Duration = HubProtocol.handshakeTimeout,
                     maxBuffered: Int = HubProtocol.maxBuffered) {
-            self.maxConnections = maxConnections
+            self.connectionsPerDevice = connectionsPerDevice
+            self.spareConnections = spareConnections
             self.maxPendingHandshakes = maxPendingHandshakes
             self.handshakeTimeout = handshakeTimeout
             self.maxBuffered = maxBuffered
         }
 
         public static let standard = Limits()
+
+        /// The authenticated-connection limit while `devices` devices hold a key (NET-001
+        /// R12): per device, counted up to ``HubProtocol/maxPairedDevices``, plus the spare
+        /// ones. Standard: 6 with one device, 15 with four.
+        public func maxConnections(devices: Int) -> Int {
+            connectionsPerDevice * min(max(devices, 0), HubProtocol.maxPairedDevices) + spareConnections
+        }
     }
 
     private let engine: Engine
@@ -142,6 +153,8 @@ public actor HubListener {
     public var port: UInt16? { get async { await engine.currentPort() } }
     public var isRunning: Bool { engine.isRunning }
     public var connectionCount: Int { get async { await engine.connectionCount() } }
+    /// The authenticated-connection limit for the key set of the last rebuild (NET-001 R12).
+    public var maxConnections: Int { get async { await engine.currentMaxConnections() } }
 
     private func acquire() async {
         if isBusy { await withCheckedContinuation { waiters.append($0) } } else { isBusy = true }
@@ -174,6 +187,8 @@ extension HubListener {
         /// Identities seen by the TLS selection block, keyed by the handshake's metadata.
         private var identities: [ObjectIdentifier: (metadata: AnyObject, identity: String, at: Date)] = [:]
         private var lastRefusalLog: Date?
+        /// R12: set from the key set at each rebuild (the listener is rebuilt whenever it changes).
+        private var maxConnections: Int
         private let running = OSAllocatedUnfairLock(initialState: false)
 
         init(router: HubRouter, keyring: HubKeyring, advertise: @escaping @Sendable () -> Advertisement?,
@@ -184,12 +199,14 @@ extension HubListener {
             self.loopbackOnly = loopbackOnly
             self.limits = limits
             self.events = events
+            maxConnections = limits.maxConnections(devices: 0)
         }
 
         var isRunning: Bool { running.withLock { $0 } }
 
         func currentPort() async -> UInt16? { await onQueue { self.port?.rawValue } }
         func connectionCount() async -> Int { await onQueue { self.connections.count } }
+        func currentMaxConnections() async -> Int { await onQueue { self.maxConnections } }
 
         private func onQueue<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
             await withCheckedContinuation { c in queue.async { c.resume(returning: body()) } }
@@ -205,9 +222,14 @@ extension HubListener {
                let port = await currentPort() {
                 return port
             }
+            // R12: paired and pending devices; the `pair` session uses the spare slots.
+            let maxConnections = limits.maxConnections(devices: keys.keys.count { $0 != HubProtocol.pairIdentity })
             let previous: NWEndpoint.Port? = await onQueue {
                 self.listener?.cancel()
                 self.listener = nil
+                // Open connections stay when the limit drops; a removed device's connections
+                // are closed on their own (NET-002 R9).
+                self.maxConnections = maxConnections
                 return self.port
             }
             // Same port first, so clients holding the endpoint keep working; then any port.
@@ -370,8 +392,8 @@ extension HubListener {
 
         private func accept(_ connection: NWConnection) {
             let authenticated = authenticatedCount
-            guard authenticated < limits.maxConnections else {
-                refuse(connection, "\(limits.maxConnections) connections open")
+            guard authenticated < maxConnections else {
+                refuse(connection, "\(maxConnections) connections open")
                 return
             }
             // R12a: handshakes in progress have their own small budget, so half-open
@@ -427,8 +449,8 @@ extension HubListener {
                 return
             }
             // Another handshake may have finished first and taken the last slot.
-            guard authenticatedCount < limits.maxConnections else {
-                refuse(conn.connection, "\(limits.maxConnections) connections open")
+            guard authenticatedCount < maxConnections else {
+                refuse(conn.connection, "\(maxConnections) connections open")
                 return
             }
             let caller: HubCaller

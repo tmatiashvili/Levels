@@ -42,8 +42,8 @@ On the free team there is no iCloud, so the iPhone can't see the Mac and the Mac
 - **R9** `POST /v1/readings` accepts only records whose `id` equals the `Levels-Device` header and whose `kind` is `iphone` or `ipad`, at most 1 record. The header must match a paired device; the connection must have passed R5. Other records or a missing header: `403`, nothing written. Each accepted record is checked: `hasConsistentAccessory`, name trimmed to 40 characters, `level` clamped (SYNC-002 R3). The Mac sets `serverModifiedAt` to its own receive time, then calls `LocalOnlySyncService.ingest([record], replacingAllExcept: nil)`.
 - **R10** `ingest` merges by SYNC-002 R14 (newer `updatedAt` wins; on a tie the incoming one wins) and applies the SYNC-001 R8a widget reload rule (lead's call 17). It doesn't pass through `LocalWritePolicy`: the client already throttled (ADR-0008 on the iPhone). It writes nothing while reporting is off.
 - **R11** A held long-poll ends early when the cache changes (the app's change relay, the same one the popover uses). If the client closes, the hold ends. At most one held request per connection.
-- **R12** Limits: at most 4 open connections (the 5th is cancelled at once); a connection idle for 60 s is closed; at most 10 requests per second per connection, more get `429`.
-- **R12a** Handshakes (lead's call 30): a connection that hasn't finished the TLS handshake 10 s after it arrived is closed. Connections still in the handshake have their own budget of 3 and don't count toward R12's 4, so half-open connections can't take the slots of authenticated ones; a new connection over either limit is cancelled at once.
+- **R12** Limits (lead's call 31): at most 3 authenticated connections per paired device (the app's long-poll, a short POST, the widget's own fetch) plus 3 spare (the pairing session, a re-pair, a connection still closing after a network change), so 6 with one device and 15 with 4; a connection over the limit is cancelled at once; a connection idle for 60 s is closed; at most 10 requests per second per connection, more get `429`.
+- **R12a** Handshakes (lead's call 30): a connection that hasn't finished the TLS handshake 10 s after it arrived is closed. Connections still in the handshake have their own budget of 3 and don't count toward R12's limit, so half-open connections can't take the slots of authenticated ones; a new connection over either limit is cancelled at once.
 - **R13** While reporting is off (Remove all my data, SYNC-001 R15a) the listener stops (R1). "Remove all my data" on the Mac also removes every client's record from the cache (the cache reset does that). Pairings stay. A client that reports later adds itself back, as ADR-0019 §6 warns.
 - **R14** Settings ▸ "iPhone" section: the toggle of R1; status line ("Sharing on this Wi-Fi", "Off", "Not sharing: no iPhone paired"); paired devices with name, kind, "last seen" age and Remove (NET-002 R9); "Pair iPhone…" (NET-002); "Remove all pairings" (confirmation; drops every key and makes a new hub ID).
 - **R15** Firewall hint: if the listener is running, at least one device is paired, and no TLS handshake has succeeded for 24 h, the section shows "If your iPhone can't find this Mac, check System Settings ▸ Network ▸ Firewall ▸ Options and allow Levels." It hides after the next successful handshake.
@@ -136,14 +136,14 @@ Both run under the existing serial gate, so they never interleave with a report 
 
 ## Edge cases and failure modes
 
-- Port in use or listener fails: retry once after 5 s; then status "Couldn't start sharing" with a Retry button. No loop.
+- Port in use or listener fails (lead's call 31): retry after 5 s, 15 s, 1 min, then every 5 min (one-shot waits, R17), and at once when the network path becomes satisfied. The first failure still shows "Starting…"; from the second on, "Couldn't start sharing" with a Retry button. A running listener that waits for its network path is kept, not counted as a failure. `HubRetryPolicy` (LevelsNet) holds these rules.
 - Mac sleeps: the listener stops answering; iPhones see "Away" (NET-003). On wake the listener resumes by itself (Network.framework); if it failed, R1 restarts it.
 - Wi-Fi changes on the Mac: the listener follows; Bonjour re-registers.
 - Two clients send at once: the router serialises per request; `ingest` serialises under the gate.
 - A client clock far ahead: `serverModifiedAt` caps the reading date (SYNC-002 R8).
 - Pairing removed while a client is connected: its connections close at once (R5 refuses the next handshake).
 - Cache file unreadable: `snapshot()` returns the last good copy, or `503` if none.
-- More than 4 connections (a buggy client loop): extra connections drop; logged once per minute.
+- More connections than R12 allows (a buggy client loop): extra connections drop; logged once per minute.
 - Firewall blocks: the Mac can't tell; R15 hints.
 - The Mac joins another Wi-Fi (café, office): it advertises `Levels-<tag>` there too. Nothing can be read without a key. The tag is 4 hex characters of a random ID and names no one. The owner can turn sharing off (R1).
 

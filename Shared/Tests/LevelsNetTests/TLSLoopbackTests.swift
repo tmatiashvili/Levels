@@ -110,16 +110,76 @@ struct TLSLoopbackTests {
         await rig.listener.stop()
     }
 
-    @Test func R12_fifthConnectionIsDropped() async throws {
+    /// R12 (lead's call 31): 3 per paired device plus 3, so with one device the 7th drops.
+    @Test func R12_connectionOverTheLimitIsDropped() async throws {
         let rig = try await rig()
+        #expect(await rig.listener.maxConnections == 6)
         var open: [HubClientConnection] = []
-        for _ in 0..<4 { open.append(try await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).get()) }
-        await waitFor { await rig.listener.connectionCount == 4 }
-        let fifth = await connect(rig, identity: phoneID.recordName, key: Self.phoneKey)
-        #expect(fifth.failure != nil)
+        for _ in 0..<6 { open.append(try await connect(rig, identity: phoneID.recordName, key: Self.phoneKey).get()) }
+        await waitFor { await rig.listener.connectionCount == 6 }
+        let seventh = await connect(rig, identity: phoneID.recordName, key: Self.phoneKey)
+        #expect(seventh.failure != nil)
         #expect(rig.events.withLock { $0 }.contains(.connectionRefused))
         for c in open { c.close() }
         await rig.listener.stop()
+    }
+
+    /// R12: the limit follows the key set at each rebuild.
+    @Test func R12_limitGrowsWithPairedDevices() async throws {
+        let rig = try await rig()
+        for n in 0..<3 {
+            try rig.store.save(PairedClient(id: DeviceID(UUID()), name: "iPad \(n)", kind: .ipad,
+                                            key: Data(repeating: UInt8(n + 3), count: 32), pairedAt: t0))
+        }
+        #expect(await rig.listener.reload())
+        #expect(await rig.listener.maxConnections == 15)
+        // The pairing session uses the spare slots, not a device's.
+        _ = rig.window.open(hub: hubInfo)
+        #expect(await rig.listener.reload())
+        #expect(await rig.listener.maxConnections == 15)
+        rig.window.close()
+        try rig.store.removeAll()
+        #expect(await rig.listener.reload())
+        #expect(await rig.listener.maxConnections == 3)
+        await rig.listener.stop()
+    }
+
+    @Test func R12_limitIsThreePerDeviceCappedPlusThree() {
+        let limits = HubListener.Limits.standard
+        #expect(limits.maxConnections(devices: 0) == 3)
+        #expect(limits.maxConnections(devices: 1) == 6)
+        #expect(limits.maxConnections(devices: 4) == 15)
+        #expect(limits.maxConnections(devices: 9) == 15)  // never more than maxPairedDevices count
+    }
+
+    /// R5: the identity is checked again when the handshake completes. A device removed
+    /// between the selection block and `.ready` is closed and never served.
+    @Test func R5_deviceRemovedDuringHandshakeIsClosedAtReady() async throws {
+        let inner = InMemoryHubPairingStore([PairedClient(id: phoneID, name: "My iPhone", kind: .iphone,
+                                                          key: Self.phoneKey.withUnsafeBytes { Data($0) }, pairedAt: t0)])
+        // The first live check (the selection block) passes; the one at `.ready` sees it gone.
+        let store = RevokingStore(inner, allowedLookups: 1)
+        let window = PairingWindow(store: store)
+        let events = EventLog()
+        let listener = HubListener(router: HubRouter(backend: FakeBackend(devices: [macRecord()], window: window)),
+                                   keyring: HubKeyring(store: store, window: window), loopbackOnly: true,
+                                   events: { e in events.append(e) })
+        let port = try await listener.start()
+        let c = HubClientConnection(endpoint: FixedHubLocator(loopbackPort: port).endpoint,
+                                    identity: phoneID.recordName, key: Self.phoneKey)
+        let served: Bool
+        do {
+            try await c.open(timeout: .seconds(5))
+            served = (try? await c.exchange(HTTPRequest(method: "GET", path: "/v1/snapshot"), timeout: .seconds(2))) != nil
+        } catch {
+            served = false
+        }
+        #expect(!served)
+        #expect(store.lookups >= 2)
+        await waitFor { await listener.connectionCount == 0 }
+        #expect(!events.withLock { $0 }.contains(.handshakeSucceeded(.device(phoneID))))
+        c.close()
+        await listener.stop()
     }
 
     /// `reload()` reports whether the listener runs with the current keys, so the app never
@@ -144,6 +204,51 @@ struct TLSLoopbackTests {
         #expect(response.status == 400)
         await rig.listener.stop()
     }
+
+    /// R6: a flood of bad requests gets one 400 and the connection closes.
+    ///
+    /// Behaviour check only: on loopback the 400's send completes before the next bytes are
+    /// read, so this passes even without the busy mark in `process` that stops a second 400.
+    /// That race needs a slower network to show.
+    @Test func R6_floodOfMalformedRequestsGetsOne400() async throws {
+        let rig = try await rig()
+        let raw = RawTLS(port: rig.port, identity: phoneID.recordName, key: Self.phoneKey)
+        #expect(await raw.open())
+        await waitFor { await rig.listener.connectionCount == 1 }
+        // Header blocks over 8 KB, each its own TLS record: every chunk alone is a bad request.
+        for _ in 0..<14 { raw.send(Data(repeating: 0x41, count: 9 * 1024)) }
+        await waitFor(timeout: .seconds(3)) { raw.isClosed }
+        let text = String(decoding: raw.received, as: UTF8.self)
+        #expect(text.components(separatedBy: "HTTP/1.1 400").count - 1 == 1)
+        await rig.listener.stop()
+    }
+}
+
+/// A pairing store whose live `key(for:)` check passes only the first `allowedLookups` times,
+/// as if the device were removed right after the TLS selection block ran.
+final class RevokingStore: HubPairingStore {
+    private let inner: InMemoryHubPairingStore
+    private let state: Mutex<(allowed: Int, lookups: Int)>
+    init(_ inner: InMemoryHubPairingStore, allowedLookups: Int) {
+        self.inner = inner
+        state = Mutex((allowedLookups, 0))
+    }
+
+    var lookups: Int { state.withLock { $0.lookups } }
+
+    func key(for id: DeviceID) -> SymmetricKey? {
+        let allowed = state.withLock { s in
+            s.lookups += 1
+            return s.lookups <= s.allowed
+        }
+        return allowed ? inner.key(for: id) : nil
+    }
+
+    func all() -> [PairedClient] { inner.all() }
+    func save(_ client: PairedClient) throws { try inner.save(client) }
+    func remove(_ id: DeviceID) throws { try inner.remove(id) }
+    func removeAll() throws { try inner.removeAll() }
+    func touch(_ id: DeviceID, at: Date) { inner.touch(id, at: at) }
 }
 
 extension TLSLoopbackTests {
@@ -171,7 +276,7 @@ extension TLSLoopbackTests {
         await rig.listener.stop()
     }
 
-    /// R12a: with every pending slot taken, the 4 authenticated slots are still there.
+    /// R12a: with every pending slot taken, the authenticated slots are still there.
     @Test func R12a_pendingHandshakesDontTakeAuthenticatedSlots() async throws {
         let rig = try await rig(limits: .init(maxPendingHandshakes: 1, handshakeTimeout: .seconds(30)))
         var open: [HubClientConnection] = []
@@ -223,11 +328,14 @@ extension TLSLoopbackTests {
 final class RawTCP: @unchecked Sendable {
     let connection: NWConnection
     private let closed = Mutex(false)
+    private let data = Mutex(Data())
     init(port: UInt16, parameters: NWParameters = .tcp) {
         connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: parameters)
     }
 
     var isClosed: Bool { closed.withLock { $0 } }
+    /// Every byte the server sent.
+    var received: Data { data.withLock { $0 } }
 
     /// Waits until ready; `false` on failure. Then watches for the server closing it.
     func open() async -> Bool {
@@ -249,8 +357,9 @@ final class RawTCP: @unchecked Sendable {
     }
 
     private func watch() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] _, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] chunk, _, isComplete, error in
             guard let self else { return }
+            if let chunk { self.data.withLock { $0.append(chunk) } }
             if isComplete || error != nil {
                 self.closed.withLock { $0 = true }
                 self.connection.cancel()
@@ -271,6 +380,7 @@ final class RawTLS: @unchecked Sendable {
         raw = RawTCP(port: port, parameters: NWParameters(tls: HubTLS.clientOptions(identity: identity, key: key), tcp: .init()))
     }
     var isClosed: Bool { raw.isClosed }
+    var received: Data { raw.received }
     func open() async -> Bool { await raw.open() }
     func send(_ data: Data) { raw.send(data) }
 }
