@@ -31,6 +31,7 @@ Owner decisions and lead's calls, one row each, with the document that holds the
 | 2026-11-24 | S | StandBy is free: it shows the free small widget. No StandBy detection. Refines O. | [MON-001](specs/MON-001-levels-pro-entitlements.md) R14, R15 |
 | 2026-11-24 | T | The Mac app stays fully free and shows every device, including the iPhone. | [ADR-0021](adr/0021-levels-pro-subscription.md), lead's call 32 |
 | 2026-11-24 | U | Build push-driven widget updates now and pay the $99 Apple Developer Program fee later; nothing runs on devices until then. The Mac pushes widget reloads (and an optional "Follow charging" Live Activity) through a small relay that holds the APNs key, so the key never ships in the public Mac app. | [ADR-0023](adr/0023-push-updates.md), [PUSH-001](specs/PUSH-001-push-widget-updates.md) |
+| 2026-11-24 | V | Build a "Live levels" Live Activity now: the current battery of this iPhone, the Mac and AirPods on the Lock Screen, in StandBy and the Dynamic Island. The app updates it locally today (free team); after enrollment the Mac also pushes it through the relay. Replaces the one-device "Follow charging" activity. Free or Pro is still open: the gate is one function, `LiveActivityAccess.isAllowed()`, returning true for now. | [LIVE-001](specs/LIVE-001-live-activity.md), [PUSH-001](specs/PUSH-001-push-widget-updates.md) R55, R74, R75, [ADR-0023](adr/0023-push-updates.md) Decision 2 |
 
 ## Lead's calls
 

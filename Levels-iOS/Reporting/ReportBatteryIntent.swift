@@ -24,6 +24,7 @@ struct ReportBatteryIntent: AppIntent {
             isUnavailable: { ($0 as? ReportError) == .iCloudUnavailable },
             report: { try await reporter.reportNow(reason: .appIntent) != nil })
         Self.logger.notice("Report Battery intent: \(String(describing: outcome), privacy: .public)")
+        await AppModel.shared.refreshLiveActivityAfterIntent()  // LIVE-001 R21; no-op without a Live Activity
         if outcome == .unavailable { throw ReportBatteryError.unavailable }
         return .result()
     }

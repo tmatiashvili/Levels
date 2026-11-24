@@ -139,11 +139,22 @@ import os
         // Tokens and grants live in the hub's pairing store (removed with the device). No relay URL = off.
         let alertStore = UserDefaultsAlertStore(suiteName: group)
         let presence = pushSupport?.presence
-        pushFeed.bind(WidgetPushScheduler(
+        let widgets = WidgetPushScheduler(
             relay: relayClient,
             store: hub.store,
             alertThreshold: { alertStore.loadSettings(defaults: .defaults(for: .mac)).threshold },  // R52, ALR-001
-            isLive: { id, at in presence?.isLive(id, at: at) ?? false }))  // R54
+            isLive: { id, at in presence?.isLive(id, at: at) ?? false })  // R54
+        // LIVE-001 R20–R29: the iPhone's "Live levels" activity gets the new levels by push.
+        let liveActivities = LiveActivityPushScheduler(
+            relay: relayClient,
+            store: hub.store,
+            macID: { (try? identity.currentDeviceID()) ?? nil },
+            alertThreshold: { alertStore.loadSettings(defaults: .defaults(for: .mac)).threshold },
+            isLive: { id, at in presence?.isLive(id, at: at) ?? false })  // R26
+        pushFeed.bind { devices in
+            await widgets.devicesChanged(devices)
+            await liveActivities.devicesChanged(devices)
+        }
         Self.logger.notice("Widget push \(relayClient == nil ? "off (no relay URL or no key)" : "on", privacy: .public)")
         #endif
         reportingChanged.set { Task { @MainActor in await hub.evaluate() } }
@@ -251,15 +262,15 @@ import os
 // MARK: - Wiring helpers
 
 #if LEVELS_PUSH
-/// Late-bound push scheduler: the cache service is built before the hub's pairing store.
+/// Late-bound push schedulers (widget and Live Activity): the cache service is built before the hub's pairing store.
 /// One consumer, newest change wins, so changes reach the scheduler in order.
 final class PushFeed: Sendable {
     private let stream: AsyncStream<[DeviceBattery]>
     private let continuation: AsyncStream<[DeviceBattery]>.Continuation
     init() { (stream, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1)) }
-    func bind(_ scheduler: WidgetPushScheduler) {
+    func bind(_ consumer: @escaping @Sendable ([DeviceBattery]) async -> Void) {
         let stream = stream
-        Task { for await devices in stream { await scheduler.devicesChanged(devices) } }
+        Task { for await devices in stream { await consumer(devices) } }
     }
     func devicesChanged(_ devices: [DeviceBattery]) { continuation.yield(devices) }
 }

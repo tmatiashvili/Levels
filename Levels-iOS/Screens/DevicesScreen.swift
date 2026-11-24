@@ -29,6 +29,9 @@ struct DevicesScreen: View {
                 }
                 .navigationTitle("Levels")
                 .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        LiveActivityToolbarButton()  // LIVE-001 R1
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { model.showsSettings = true } label: {
                             Label("Settings", systemImage: "gearshape")

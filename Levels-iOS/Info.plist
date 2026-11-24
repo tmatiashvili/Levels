@@ -25,6 +25,10 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_levels._tcp</string>

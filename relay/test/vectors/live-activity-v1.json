@@ -1,0 +1,9 @@
+{
+  "comment": "LIVE-001 R30 shared vector: the exact POST /v1/widget-push body the Mac sends for a Live Activity, and the APNs body the relay builds from it. Asserted by relay/test/live-activity-vector.test.ts and Shared/Tests/LevelsNetTests/LiveActivityVectorTests.swift. Change only together with both implementations.",
+  "now": 1800000000,
+  "token": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+  "env": "development",
+  "priority": 10,
+  "body": "{\"payload\":{\"content-state\":{\"devices\":[{\"charging\":false,\"level\":64,\"role\":\"iphone\",\"updatedAt\":1799999990},{\"charging\":true,\"level\":82,\"role\":\"mac\",\"updatedAt\":1800000000},{\"charging\":false,\"level\":15,\"role\":\"airpods\",\"updatedAt\":1799999900}]},\"event\":\"update\",\"priority\":10,\"stale-date\":1800001800,\"timestamp\":1800000000},\"tokens\":[{\"env\":\"development\",\"kind\":\"liveActivity\",\"token\":\"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\"}]}",
+  "apnsBody": "{\"aps\":{\"timestamp\":1800000000,\"event\":\"update\",\"content-state\":{\"devices\":[{\"charging\":false,\"level\":64,\"role\":\"iphone\",\"updatedAt\":1799999990},{\"charging\":true,\"level\":82,\"role\":\"mac\",\"updatedAt\":1800000000},{\"charging\":false,\"level\":15,\"role\":\"airpods\",\"updatedAt\":1799999900}]},\"stale-date\":1800001800}}"
+}
