@@ -242,7 +242,7 @@ public struct LevelsDevicesWidget: Widget {
     public var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: Self.kind, intent: SelectDeviceIntent.self, provider: DevicesProvider()) { entry in
             DevicesWidgetView(entry: entry)
-                .containerBackground(.fill.tertiary, for: .widget)  // UI-003 R10
+                .containerBackground(for: .widget) { WidgetGlassBackground() }  // UI-003 R10
         }
         .configurationDisplayName(Text("Battery Levels"))
         .description(Text("See the battery of all your devices."))

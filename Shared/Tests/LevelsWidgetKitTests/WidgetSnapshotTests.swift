@@ -57,8 +57,10 @@ private enum HostStyle: String, CaseIterable {
     @MainActor @ViewBuilder func plate(accessory: Bool) -> some View {
         let shape = RoundedRectangle(cornerRadius: accessory ? 12 : 22, style: .continuous)
         switch self {
-        case .defaultLight: shape.fill(Color(white: 0.96))
-        case .defaultDark: shape.fill(Color(white: 0.14))
+        // Full colour: the widget's own container background. `ContainerRelativeShape` has no
+        // container outside the host, so clip it to the widget's corners here.
+        case .defaultLight, .defaultDark:
+            if accessory { Color.clear } else { WidgetGlassBackground().clipShape(shape) }
         case .clear: shape.fill(Color.white.opacity(0.10)).overlay(shape.stroke(Color.white.opacity(0.35), lineWidth: 1))
         case .tinted: shape.fill(Color(red: 0.30, green: 0.20, blue: 0.08).opacity(0.85))
         case .vibrant: Color.clear
