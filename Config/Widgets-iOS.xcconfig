@@ -12,8 +12,13 @@ PRODUCT_BUNDLE_IDENTIFIER = $(LEVELS_RDNS).levels.widgets
 INFOPLIST_FILE = Widgets-iOS/Info.plist
 INFOPLIST_KEY_CFBundleDisplayName = Levels Widgets
 
-// No push or iCloud here, so Debug and Release share one file.
-CODE_SIGN_ENTITLEMENTS = Widgets-iOS/Widgets-iOS.entitlements
+// No iCloud here, so Debug and Release share one file. Push (LEVELS_PUSH_ENABLED in
+// Levels.xcconfig): WidgetKit push needs aps-environment on the extension too, so YES
+// switches to the push file and compiles the WidgetPushHandler (LEVELS_PUSH).
+WIDGETS_IOS_ENTITLEMENTS_NO = Widgets-iOS/Widgets-iOS.entitlements
+WIDGETS_IOS_ENTITLEMENTS_YES = Config/Widgets-iOS-Push.entitlements
+CODE_SIGN_ENTITLEMENTS = $(WIDGETS_IOS_ENTITLEMENTS_$(LEVELS_PUSH_ENABLED))
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(LEVELS_PUSH_SWIFT_FLAG_$(LEVELS_PUSH_ENABLED))
 
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks @executable_path/../../Frameworks
 SKIP_INSTALL = YES

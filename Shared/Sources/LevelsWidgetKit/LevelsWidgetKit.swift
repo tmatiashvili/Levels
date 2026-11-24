@@ -124,6 +124,11 @@ public enum DevicesTimeline {
 public enum HubWidgetPlan {
     /// The cache counts as fresh this long after `lastFetchAt`.
     public static let freshFor: TimeInterval = 15 * 60
+    /// With push on (a widget push token is stored), a reload is usually a push saying the
+    /// Mac's data changed, and WidgetKit doesn't say why it reloads. The cache then counts as
+    /// fresh only this long, so a push reload fetches; widgets reloading together still share
+    /// one fetch (``SharedFetch``).
+    public static let freshForWithPush: TimeInterval = 10
     /// Reload after a good fetch (or a fresh cache). 30 minutes (48 a day) stays inside the
     /// WidgetKit reload budget; 15 minutes (96 a day) did not.
     public static let afterSuccess: TimeInterval = 30 * 60
@@ -166,7 +171,7 @@ public enum HubWidgetPlan {
     public enum Outcome: Equatable, Sendable { case variantA, cacheFresh, fetched, failed, macError }
 
     /// Picks the snapshot to show and the next reload date. `nil` reload = variant A's policy.
-    public static func resolve(cached: SnapshotFile?, now: Date, fetch: Fetch?) async
+    public static func resolve(cached: SnapshotFile?, now: Date, freshFor: TimeInterval = freshFor, fetch: Fetch?) async
         -> (snapshot: SnapshotFile?, reloadAt: Date?, outcome: Outcome) {
         guard let fetch, let cached, cached.syncStatus != .notPaired else { return (cached, nil, .variantA) }
         if let last = cached.lastFetchAt, now.timeIntervalSince(last) < freshFor, now >= last {
@@ -192,10 +197,15 @@ public struct DevicesProvider: AppIntentTimelineProvider {
     let fetch: HubWidgetPlan.Fetch?
     /// iPhone: the widget's own `UIDevice` read of this iPhone, laid over the cached own record.
     let readOwn: OwnBatteryReading.Read?
+    /// How long the cache counts as fresh (``HubWidgetPlan/freshFor``, or
+    /// ``HubWidgetPlan/freshForWithPush`` while push is on). Read at each timeline load.
+    let freshFor: @Sendable () -> TimeInterval
 
-    public init(fetch: HubWidgetPlan.Fetch? = nil, readOwn: OwnBatteryReading.Read? = nil) {
+    public init(fetch: HubWidgetPlan.Fetch? = nil, readOwn: OwnBatteryReading.Read? = nil,
+                freshFor: @escaping @Sendable () -> TimeInterval = { HubWidgetPlan.freshFor }) {
         self.fetch = fetch
         self.readOwn = readOwn
+        self.freshFor = freshFor
     }
 
     static func cached() -> (SnapshotFile?, DisplayPreferences) {
@@ -241,7 +251,7 @@ public struct DevicesProvider: AppIntentTimelineProvider {
         }
         let (cached, prefs) = Self.cached()
         return await Self.hubTimeline(cached: cached, preferences: prefs, now: now, selection: selection, fetch: fetch,
-                                      own: await readOwn?())
+                                      own: await readOwn?(), freshFor: freshFor())
     }
 
     /// The Mac timeline: the cache with this Mac's live reading laid over its own record, the
@@ -260,8 +270,8 @@ public struct DevicesProvider: AppIntentTimelineProvider {
     /// Pure apart from `fetch`; unit-tested.
     static func hubTimeline(cached: SnapshotFile?, preferences prefs: DisplayPreferences, now: Date,
                             selection: DeviceID?, fetch: @escaping HubWidgetPlan.Fetch,
-                            own: OwnBatteryReading?) async -> Timeline<DeviceEntry> {
-        let plan = await HubWidgetPlan.resolve(cached: cached, now: now, fetch: fetch)
+                            own: OwnBatteryReading?, freshFor: TimeInterval = HubWidgetPlan.freshFor) async -> Timeline<DeviceEntry> {
+        let plan = await HubWidgetPlan.resolve(cached: cached, now: now, freshFor: freshFor, fetch: fetch)
         let snapshot = plan.snapshot?.overlaying(own: own)
         let entries = DevicesTimeline.entries(snapshot: snapshot, preferences: prefs, now: now, selection: selection)
         guard let reloadAt = plan.reloadAt else {

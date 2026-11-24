@@ -19,6 +19,8 @@ public protocol HubBackend: Sendable {
     func ingest(_ record: DeviceBattery) async -> Bool
     /// `DELETE /v1/devices/me`.
     func removeRecord(_ id: DeviceID) async
+    /// `PUT /v1/push-tokens`: replaces the device's push tokens. `false` = not stored.
+    func setPushTokens(_ tokens: [PushToken], for id: DeviceID) async -> Bool
     /// `DELETE /v1/pairing` (NET-002 R9).
     func forget(_ id: DeviceID) async
     func isPaired(_ id: DeviceID) -> Bool
@@ -66,7 +68,7 @@ public actor HubRouter {
         let methods: [String: Set<String>] = [
             HubProtocol.Path.snapshot: ["GET"], HubProtocol.Path.readings: ["POST"],
             HubProtocol.Path.devicesMe: ["DELETE"], HubProtocol.Path.pairing: ["DELETE"], HubProtocol.Path.pair: ["POST"],
-            HubProtocol.Path.pairConfirm: ["POST"],
+            HubProtocol.Path.pairConfirm: ["POST"], HubProtocol.Path.pushTokens: ["PUT"],
         ]
         guard let allowed = methods[request.path] else { return HTTPResponse(status: 404) }
         guard allowed.contains(request.method) else { return HTTPResponse(status: 405) }
@@ -85,6 +87,7 @@ public actor HubRouter {
         switch request.path {
         case HubProtocol.Path.snapshot: return await snapshot(request)
         case HubProtocol.Path.readings: return await readings(request, from: id)
+        case HubProtocol.Path.pushTokens: return await pushTokens(request, from: id)
         case HubProtocol.Path.devicesMe:
             await backend.removeRecord(id)
             return HTTPResponse(status: 204)
@@ -152,6 +155,26 @@ public actor HubRouter {
         var headers: [String: String] = [:]
         if let s = await backend.snapshot() { headers["etag"] = HubWire.etag(for: s.devices) }
         return HTTPResponse(status: 204, headers: headers)
+    }
+
+    // MARK: PUT /v1/push-tokens
+
+    /// The caller's own token set only (the TLS identity and the header must agree), at most
+    /// ``HubProtocol/maxPushTokensPerDevice``, each valid hex. Duplicates are dropped.
+    private func pushTokens(_ request: HTTPRequest, from id: DeviceID) async -> HTTPResponse {
+        guard let header = request.header(HubProtocol.deviceHeader), DeviceID(recordName: header) == id,
+              backend.isPaired(id)
+        else { return HTTPResponse(status: 403) }
+        guard let upload = try? HubWire.decoder().decode(PushTokenUpload.self, from: request.body),
+              upload.v == HubProtocol.pushTokensVersion
+        else { return HTTPResponse(status: 400) }
+        var seen = Set<PushToken>()
+        let tokens = upload.tokens.filter { seen.insert($0).inserted }
+        guard tokens.count <= HubProtocol.maxPushTokensPerDevice, tokens.allSatisfy(\.isValid) else {
+            return HTTPResponse(status: 400)
+        }
+        guard await backend.setPushTokens(tokens, for: id) else { return HTTPResponse(status: 503) }
+        return HTTPResponse(status: 204)
     }
 
     // MARK: POST /v1/pair (NET-002 R5)

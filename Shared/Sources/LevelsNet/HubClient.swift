@@ -178,6 +178,21 @@ public actor HubClient {
         return response.header("etag")
     }
 
+    /// `PUT /v1/push-tokens` with this device's full token set. `false` when the Mac doesn't
+    /// know the route (404/405: an older Mac); other errors throw.
+    @discardableResult
+    public func putPushTokens(_ tokens: [PushToken]) async throws(HubError) -> Bool {
+        guard let body = try? HubWire.encoder().encode(PushTokenUpload(tokens: tokens)) else { throw .badResponse(0) }
+        let request = HTTPRequest(method: "PUT", path: HubProtocol.Path.pushTokens,
+                                  headers: ["content-type": "application/json"], body: body)
+        let response = try await send(request, timeout: Self.answerMargin)
+        switch response.status {
+        case 204: return true
+        case 404, 405: return false
+        default: throw .badResponse(response.status)
+        }
+    }
+
     /// `DELETE /v1/devices/me` (NET-003 R10).
     public func deleteMe() async throws(HubError) {
         let response = try await send(HTTPRequest(method: "DELETE", path: HubProtocol.Path.devicesMe), timeout: Self.answerMargin)

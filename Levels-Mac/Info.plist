@@ -8,6 +8,8 @@
 	<string>$(DEVELOPMENT_TEAM).$(LEVELS_RDNS).levels.shared</string>
 	<key>LevelsKeychainService</key>
 	<string>$(LEVELS_RDNS).levels.device-identity</string>
+	<key>LevelsPushRelayURL</key>
+	<string>$(LEVELS_PUSH_RELAY_URL)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

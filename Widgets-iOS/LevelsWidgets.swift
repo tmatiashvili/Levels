@@ -27,9 +27,18 @@ struct PhoneDevicesWidget: Widget {
     ]
 
     var body: some WidgetConfiguration {
+        #if LEVELS_PUSH
+        configuration.pushHandler(LevelsWidgetPushHandler.self)  // WidgetPush.swift
+        #else
+        configuration
+        #endif
+    }
+
+    private var configuration: some WidgetConfiguration {
         AppIntentConfiguration(kind: LevelsDevicesWidget.kind, intent: SelectDeviceIntent.self,
                                provider: DevicesProvider(fetch: WidgetHubFetch.make(),
-                                                         readOwn: WidgetOwnBattery.read)) { entry in
+                                                         readOwn: WidgetOwnBattery.read,
+                                                         freshFor: WidgetPushState.freshFor)) { entry in
             PhoneWidgetView(entry: entry)
         }
         .configurationDisplayName(Text("Battery Levels"))

@@ -159,6 +159,17 @@ When the owner pays, put these keys back into `Levels-Mac/Levels-Mac.entitlement
 
 A new Team ID changes `$(TeamIdentifierPrefix)`, so the App Group and keychain group get new IDs and the Mac starts with an empty cache. That is fine for a cache.
 
+### Widget push (after paying)
+
+The push-driven iPhone widget (ADR-0023, PUSH-001) is built but off. `LEVELS_PUSH_ENABLED = NO` in `Config/Levels.xcconfig` keeps the free-team build as it was: the old entitlements files, no push handler, no token upload, no relay calls. To turn it on:
+
+1. Change `DEVELOPMENT_TEAM` to the paid Team ID.
+2. Set `LEVELS_PUSH_ENABLED = YES`. The iPhone app and widget then sign with `Config/Levels-iOS-Push.entitlements` and `Config/Widgets-iOS-Push.entitlements` (`aps-environment` = `development`; a TestFlight or App Store export rewrites it to `production`). Both targets need it: WidgetKit push asks for the capability on the app and the extension.
+3. Set `LEVELS_PUSH_RELAY_URL` to the relay's base URL, written as `https:/$()/<host>` (xcconfig reads `//` as a comment). Empty keeps the Mac from calling the relay.
+4. Put the relay's auth into a `PushRelayAuth` (`Shared/Sources/LevelsNet/PushRelay.swift`) and pass it where `Levels-Mac/MacAppModel.swift` builds the `PushRelayClient`. The placeholder sends no auth, so the relay answers 401.
+
+The Mac itself needs no push entitlement. WidgetKit push needs no `remote-notification` background mode.
+
 ## Adding the watch targets (later)
 
 > The iOS targets were added by hand on 2026-11-24 (see Targets). The steps below were written for all four targets; use them for `Levels-Watch` and `Widgets-Watch` only, and skip what concerns `Levels-iOS` and `Widgets-iOS`.

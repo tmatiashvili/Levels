@@ -209,6 +209,19 @@ struct HubWidgetPlanTests {
         #expect(plan.outcome == .cacheFresh && plan.reloadAt == now - 60 + 30 * 60)
     }
 
+    /// Push on: a reload is usually a push, so a cache a minute old is fetched again.
+    @Test func pushOnFetchesUnlessTheCacheIsSecondsOld() async {
+        let fetched = SnapshotFile(ownDeviceID: id(1), syncStatus: .localOnly, lastFetchAt: now, devices: [phone, mac])
+        let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 60), now: now,
+                                               freshFor: HubWidgetPlan.freshForWithPush) { _ in .fetched(fetched) }
+        #expect(plan.outcome == .fetched)
+        let shared = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 5), now: now,
+                                                 freshFor: HubWidgetPlan.freshForWithPush) { _ in
+            Issue.record("fetched"); return .failed
+        }
+        #expect(shared.outcome == .cacheFresh)
+    }
+
     @Test func macErrorKeepsCacheNotAwayAndRetriesOnTheNormalSchedule() async {
         let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in .macError }
         #expect(plan.outcome == .macError)

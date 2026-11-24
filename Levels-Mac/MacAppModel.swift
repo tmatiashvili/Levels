@@ -62,11 +62,20 @@ import os
         let relay = ChangeRelay()
         let hubSignal = HubChangeSignal()  // NET-001 R11: wakes held long-polls
         let reportingChanged = ChangeRelay()  // NET-001 R13: Remove all my data / resume re-apply R1
+        #if LEVELS_PUSH
+        let pushFeed = PushFeed()  // ADR-0023: cache changes → iPhone widget pushes (bound below)
+        let local = LocalOnlySyncService(cache: cache, reporting: reporting, widgetReloader: {
+            WidgetCenter.shared.reloadAllTimelines()  // SYNC-001 R8a, coalesced by the service
+            Self.logger.notice("Requested widget reload")
+            relay.fire()
+        }, onDevicesChanged: { pushFeed.devicesChanged($0) })
+        #else
         let local = LocalOnlySyncService(cache: cache, reporting: reporting, widgetReloader: {
             WidgetCenter.shared.reloadAllTimelines()  // SYNC-001 R8a, coalesced by the service
             Self.logger.notice("Requested widget reload")
             relay.fire()
         })
+        #endif
         // HIS-001: records accepted reports of both reporters into the local history.
         let history = HistoryStore(directory: HistoryStore.defaultDirectory(bundleID: Bundle.main.bundleIdentifier))
         let recording = HistoryRecordingSync(base: local, history: history, reporting: reporting)
@@ -113,6 +122,12 @@ import os
                                 DefaultDeviceName.resolved(kind: .mac, thisDeviceName: preferences.load().thisDeviceName)
                             })
         self.hub = hub
+        #if LEVELS_PUSH
+        // Tokens live in the hub's pairing store (removed with the device). No relay URL = off.
+        let relayClient = PushRelayClient(relayURL: LevelsAppConfig.pushRelayURL ?? "")
+        pushFeed.bind(WidgetPushScheduler(relay: relayClient, store: hub.store))
+        Self.logger.notice("Widget push \(relayClient == nil ? "off (no relay URL)" : "on", privacy: .public)")
+        #endif
         reportingChanged.set { Task { @MainActor in await hub.evaluate() } }
     }
 
@@ -216,6 +231,21 @@ import os
 }
 
 // MARK: - Wiring helpers
+
+#if LEVELS_PUSH
+/// Late-bound push scheduler: the cache service is built before the hub's pairing store.
+/// One consumer, newest change wins, so changes reach the scheduler in order.
+final class PushFeed: Sendable {
+    private let stream: AsyncStream<[DeviceBattery]>
+    private let continuation: AsyncStream<[DeviceBattery]>.Continuation
+    init() { (stream, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1)) }
+    func bind(_ scheduler: WidgetPushScheduler) {
+        let stream = stream
+        Task { for await devices in stream { await scheduler.devicesChanged(devices) } }
+    }
+    func devicesChanged(_ devices: [DeviceBattery]) { continuation.yield(devices) }
+}
+#endif
 
 /// Late-bound "cache changed" signal: the source is built after the sync it listens to.
 final class ChangeRelay: Sendable {

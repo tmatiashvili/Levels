@@ -18,6 +18,17 @@ public protocol HubPairingStore: Sendable {
     func removeAll() throws
     /// Updates `lastSeenAt`, written at most once per 10 minutes.
     func touch(_ id: DeviceID, at: Date)
+    /// Replaces a paired device's push tokens. Returns `false` when the device isn't paired.
+    func setPushTokens(_ tokens: [PushToken], for id: DeviceID) throws -> Bool
+}
+
+extension HubPairingStore {
+    /// Every paired device's push tokens (devices without any are left out).
+    public func pushTokens() -> [DeviceID: [PushToken]] {
+        var out: [DeviceID: [PushToken]] = [:]
+        for client in all() { if let t = client.pushTokens, !t.isEmpty { out[client.id] = t } }
+        return out
+    }
 }
 
 /// The iPhone's one hub pairing (lead's call 26).
@@ -49,6 +60,13 @@ public final class InMemoryHubPairingStore: HubPairingStore {
             if let last = client.lastSeenAt, date.timeIntervalSince(last) < touchInterval { return }
             client.lastSeenAt = date
             c[id] = client
+        }
+    }
+    public func setPushTokens(_ tokens: [PushToken], for id: DeviceID) throws -> Bool {
+        clients.withLock { c in
+            guard c[id] != nil else { return false }
+            c[id]?.pushTokens = tokens.isEmpty ? nil : tokens
+            return true
         }
     }
 }
@@ -233,6 +251,16 @@ public final class KeychainHubPairingStore: HubPairingStore {
         do { try save(client) } catch {
             storeLogger.error("Hub lastSeen write failed: \(String(describing: error), privacy: .public)")
         }
+    }
+
+    /// Writes only when the set changed (the iPhone sends it on every connect).
+    public func setPushTokens(_ tokens: [PushToken], for id: DeviceID) throws -> Bool {
+        guard var client = try load()[id] else { return false }
+        let new = tokens.isEmpty ? nil : tokens
+        guard client.pushTokens != new else { return true }
+        client.pushTokens = new
+        try save(client)
+        return true
     }
 }
 

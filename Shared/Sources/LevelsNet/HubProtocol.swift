@@ -52,6 +52,8 @@ public enum HubProtocol {
         public static let pair = "/v1/pair"
         /// Reveal the device key and wait for "They match" (NET-002 R5a, lead's call 30).
         public static let pairConfirm = "/v1/pair/confirm"
+        /// `PUT`: the device's WidgetKit / ActivityKit push tokens (``PushTokenUpload``).
+        public static let pushTokens = "/v1/push-tokens"
     }
 
     /// `Levels-<tag>`: the Bonjour instance name for a hub tag (NET-001 R2).
