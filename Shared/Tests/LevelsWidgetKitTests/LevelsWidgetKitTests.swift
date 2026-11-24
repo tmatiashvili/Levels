@@ -179,11 +179,27 @@ struct HubWidgetPlanTests {
         #expect(plan.reloadAt == now + 30 * 60)  // inside the WidgetKit budget
     }
 
-    @Test func AC8_failedFetchUsesCacheMarkedAwayAndReloadsIn60Minutes() async {
+    @Test func AC8_failedFetchUsesCacheMarkedAwayAndBacksOffByLastContact() async {
         let plan = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 3600), now: now) { _ in .failed }
         #expect(plan.outcome == .failed)
         #expect(plan.snapshot?.syncStatus == .awayFromHub(lastContactAt: now - 3600))
-        #expect(plan.reloadAt == now + 60 * 60)
+        // Last good contact 1 h ago: 30 min. A single miss 30 min after a good fetch retries in
+        // 15 min; it used to wait 60 min (30 + 60 = the 90 min gaps in the hub log).
+        #expect(plan.reloadAt == now + 30 * 60)
+        let justMissed = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 30 * 60), now: now) { _ in .failed }
+        #expect(justMissed.reloadAt == now + 15 * 60)
+        let away = await HubWidgetPlan.resolve(cached: cached(lastFetch: now - 5 * 3600), now: now) { _ in .failed }
+        #expect(away.reloadAt == now + 60 * 60)  // away from home: at most 24 reloads a day
+    }
+
+    @Test func failureDelayGrowsWithTheTimeSinceTheLastContact() {
+        #expect(HubWidgetPlan.failureDelay(lastContact: now - 30 * 60, now: now) == 15 * 60)
+        #expect(HubWidgetPlan.failureDelay(lastContact: now - 59 * 60, now: now) == 15 * 60)
+        #expect(HubWidgetPlan.failureDelay(lastContact: now - 60 * 60, now: now) == 30 * 60)
+        #expect(HubWidgetPlan.failureDelay(lastContact: now - 179 * 60, now: now) == 30 * 60)
+        #expect(HubWidgetPlan.failureDelay(lastContact: now - 3 * 3600, now: now) == HubWidgetPlan.afterFailure)
+        #expect(HubWidgetPlan.failureDelay(lastContact: nil, now: now) == HubWidgetPlan.afterFailure)
+        #expect(HubWidgetPlan.failureDelay(lastContact: now + 600, now: now) == 15 * 60)  // clock skew
     }
 
     @Test func freshCacheDoesNotFetch() async {

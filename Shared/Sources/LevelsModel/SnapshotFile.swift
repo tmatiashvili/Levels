@@ -105,3 +105,16 @@ public struct SnapshotFile: Codable, Sendable, Equatable {
         }
     }
 }
+
+extension SnapshotFile {
+    /// A full fetch from the Mac hub, taken in at `now` (the iPhone widget and app). Per device
+    /// the newer reading wins (``merge(fetched:isFullFetch:ownIDs:)``), so a fetch that answered
+    /// with older data than the cache already holds (the app's long-poll wrote a newer one while
+    /// the widget's request was in flight) never moves a level back. `lastFetchAt` never moves
+    /// back either.
+    public mutating func mergeFetch(_ fetched: [DeviceBattery], ownID: DeviceID, at now: Date) {
+        merge(fetched: fetched, isFullFetch: true, ownIDs: [ownID])
+        lastFetchAt = max(lastFetchAt ?? now, now)
+        syncStatus = .localOnly
+    }
+}

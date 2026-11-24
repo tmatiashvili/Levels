@@ -77,7 +77,13 @@ enum WidgetOwnBattery {
             let reading = OwnBatteryReading(level: OwnBatteryReading.level(fromFraction: Double(device.batteryLevel)),
                                             state: state, isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
                                             readAt: Date())
-            WidgetHubFetch.logger.notice("Widget: own battery \(reading.level.map(String.init) ?? "unknown", privacy: .public)")
+            if let level = reading.level {
+                WidgetHubFetch.logger.notice("Widget: own battery \(level, privacy: .public) %")
+            } else {
+                // UIDevice answered −1 (monitoring refused in this extension, or the Simulator):
+                // `overlaying(own:)` then keeps the app's last cached reading of this iPhone.
+                WidgetHubFetch.logger.notice("Widget: own battery unknown (UIDevice −1, monitoring \(device.isBatteryMonitoringEnabled ? "on" : "off", privacy: .public)); showing the app's last reading")
+            }
             return reading
         }
     }

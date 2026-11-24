@@ -116,8 +116,24 @@ public enum HubWidgetPlan {
     /// Reload after a good fetch (or a fresh cache). 30 minutes (48 a day) stays inside the
     /// WidgetKit reload budget; 15 minutes (96 a day) did not.
     public static let afterSuccess: TimeInterval = 30 * 60
-    /// Reload after a failed fetch.
+    /// The longest wait after a failed fetch. Every miss used to wait this long: with 30 min
+    /// after a good fetch, one miss made the 90 min gaps in the hub log.
     public static let afterFailure: TimeInterval = 60 * 60
+
+    /// The wait after a failed fetch, from how long ago the last good contact was
+    /// (`lastFetchAt`, written by the app and the widget): 15 min within an hour of it (usually
+    /// a slow Wi-Fi wake or Bonjour answer), 30 min within 3 hours, then ``afterFailure`` (away
+    /// from home: at most 24 reloads a day). Derived from the cache, so widgets that reload
+    /// together agree without shared state. Pure.
+    public static func failureDelay(lastContact: Date?, now: Date) -> TimeInterval {
+        guard let lastContact else { return afterFailure }
+        let age = now.timeIntervalSince(lastContact)
+        switch age {
+        case ..<(60 * 60): return 15 * 60
+        case ..<(3 * 60 * 60): return 30 * 60
+        default: return afterFailure
+        }
+    }
 
     /// What a widget fetch from the Mac gave.
     public enum FetchResult: Sendable {
@@ -155,7 +171,7 @@ public enum HubWidgetPlan {
         if case .awayFromHub = cached.syncStatus {} else {
             away.syncStatus = .awayFromHub(lastContactAt: cached.lastFetchAt)
         }
-        return (away, now.addingTimeInterval(afterFailure), .failed)
+        return (away, now.addingTimeInterval(failureDelay(lastContact: cached.lastFetchAt, now: now)), .failed)
     }
 }
 
@@ -210,20 +226,20 @@ public struct DevicesProvider: AppIntentTimelineProvider {
     }
 
     /// The iPhone timeline (variant B): the plan's snapshot with this iPhone's own live reading
-    /// laid over it, entries up to the plan's reload. Pure apart from `fetch`; unit-tested.
+    /// laid over it, then every ADR-0017 stale moment of the next 24 h. Stale entries after
+    /// the reload date stay: WidgetKit often reloads later than asked (the hub log showed
+    /// 90 min for a 30 min request), and without them the rows kept looking fresh until then.
+    /// Pure apart from `fetch`; unit-tested.
     static func hubTimeline(cached: SnapshotFile?, preferences prefs: DisplayPreferences, now: Date,
                             selection: DeviceID?, fetch: @escaping HubWidgetPlan.Fetch,
                             own: OwnBatteryReading?) async -> Timeline<DeviceEntry> {
         let plan = await HubWidgetPlan.resolve(cached: cached, now: now, fetch: fetch)
         let snapshot = plan.snapshot?.overlaying(own: own)
-        var entries = DevicesTimeline.entries(snapshot: snapshot, preferences: prefs, now: now, selection: selection)
+        let entries = DevicesTimeline.entries(snapshot: snapshot, preferences: prefs, now: now, selection: selection)
         guard let reloadAt = plan.reloadAt else {
             return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
         }
-        entries = entries.filter { $0.date < reloadAt }  // ADR-0017 stale entries before the reload
-        return Timeline(entries: entries.isEmpty ? [DeviceEntry(date: now, snapshot: snapshot, preferences: prefs,
-                                                                selection: selection)] : entries,
-                        policy: .after(reloadAt))
+        return Timeline(entries: entries, policy: .after(reloadAt))
     }
 
     /// Gallery and placeholder data, never the cache (UI-003 Design).

@@ -91,7 +91,9 @@ import os
         // NET-002 R8: one item in the shared access group, so the widget can read it (variant B).
         let pairingStore = KeychainClientPairingStore(service: LevelsAppConfig.hubPairingService,
                                                       items: SecKeychainItems(accessGroup: LevelsAppConfig.keychainAccessGroup))
-        let hub = LocalNetworkSyncService(local: local, outbox: outbox, transport: NWHubTransport(),
+        // The Mac's last address in the App Group: the app and the widget dial it before Bonjour.
+        let transport = NWHubTransport(memory: UserDefaultsHubEndpointMemory(suiteName: group))
+        let hub = LocalNetworkSyncService(local: local, outbox: outbox, transport: transport,
                                           pairing: pairingStore, identity: identity, cache: cache, etagSuite: group,
                                           onChange: { relay.fire() })
         // DEMO-001 R6: while demo mode is on, reports and refreshes go to DemoSyncService instead.
@@ -170,6 +172,8 @@ import os
     func enteredBackground() {
         resignedActive()
         BackgroundRefresh.schedule()
+        let hub = hub
+        Task { await hub.flushWidgetReload() }  // a held reload would die with the suspended process
     }
 
     /// R7 and NET-003 R8: the `BGAppRefreshTask` handler. Reports, then syncs with the Mac
@@ -182,6 +186,7 @@ import os
             await reporter.report(reason: .backgroundRefresh)
             if !demoMode.isOn { await hub.refresh(.backgroundRefresh) }  // DEMO-001 R5
         }
+        await hub.flushWidgetReload()  // before iOS suspends the process again
         BackgroundRefresh.schedule()
         Self.logger.notice("Background refresh finished\(finished ? "" : " (20 s limit)", privacy: .public)\(Task.isCancelled ? " (expired)" : "", privacy: .public)")
     }

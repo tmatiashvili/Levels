@@ -15,18 +15,31 @@ public protocol HubTransport: Sendable {
 /// for the next request (long-poll loop, NET-003 R7); a second request while it is busy
 /// gets its own short connection.
 public actor NWHubTransport: HubTransport {
+    private static let logger = Logger(subsystem: LevelsLog.subsystem, category: "hub")
+
     private let locator: any HubLocator
     private let findTimeout: Duration
     private let readyTimeout: Duration
+    private let memory: (any HubEndpointMemory)?
+    private let directTimeout: Duration
+    private let now: @Sendable () -> Date
     private var kept: (hubID: UUID, me: DeviceID, connection: HubClientConnection)?
 
     /// - Parameters:
     ///   - findTimeout: Bonjour lookup limit (NET-003 R5: 5 s).
     ///   - readyTimeout: connection-ready limit (NET-003 R5: 5 s).
-    public init(locator: any HubLocator = BonjourHubLocator(), findTimeout: Duration = .seconds(5), readyTimeout: Duration = .seconds(5)) {
+    ///   - memory: the Mac's last address. When set, a new connection first dials it
+    ///     (``directTimeout``), then falls back to Bonjour; a Bonjour connection saves its
+    ///     resolved address. `nil` = Bonjour only.
+    public init(locator: any HubLocator = BonjourHubLocator(), findTimeout: Duration = .seconds(5),
+                readyTimeout: Duration = .seconds(5), memory: (any HubEndpointMemory)? = nil,
+                directTimeout: Duration = .milliseconds(1500), now: @escaping @Sendable () -> Date = Date.init) {
         self.locator = locator
         self.findTimeout = findTimeout
         self.readyTimeout = readyTimeout
+        self.memory = memory
+        self.directTimeout = directTimeout
+        self.now = now
     }
 
     public func send(_ request: HTTPRequest, to pairing: HubPairing, me: DeviceID, timeout: Duration) async throws(HubError) -> HTTPResponse {
@@ -65,10 +78,44 @@ public actor NWHubTransport: HubTransport {
     }
 
     private func open(pairing: HubPairing, me: DeviceID) async throws(HubError) -> HubClientConnection {
+        let started = ContinuousClock.now
+        if let memory, let record = memory.load() {
+            if record.isUsable(for: pairing.hubID, now: now()), let endpoint = record.endpoint {
+                let direct = HubClientConnection(endpoint: endpoint, identity: me.recordName, key: pairing.symmetricKey)
+                do {
+                    try await direct.open(timeout: directTimeout)
+                    var seen = record
+                    seen.savedAt = now()  // still good: keep it past ``HubEndpointRecord/maxAge``
+                    memory.save(seen)
+                    Self.logger.notice("Hub: connected to the last address in \(Self.ms(since: started), privacy: .public) ms")
+                    return direct
+                } catch .localNetworkDenied {
+                    throw .localNetworkDenied  // Bonjour would be refused too
+                } catch {
+                    // A wrong or old address can only fail (TLS-PSK proves the Mac), even with
+                    // a refusal: that is not "the Mac forgot this iPhone" until Bonjour says so.
+                    Self.logger.notice("Hub: last address failed (\(String(describing: error), privacy: .public)) after \(Self.ms(since: started), privacy: .public) ms; using Bonjour")
+                    memory.clear()
+                }
+            } else {
+                memory.clear()
+            }
+        }
         let endpoint = try await locator.endpoint(forTag: pairing.hubTag, timeout: findTimeout)
+        let found = Self.ms(since: started)
         let connection = HubClientConnection(endpoint: endpoint, identity: me.recordName, key: pairing.symmetricKey)
         try await connection.open(timeout: readyTimeout)
+        Self.logger.notice("Hub: connected through Bonjour (found in \(found, privacy: .public) ms, ready in \(Self.ms(since: started), privacy: .public) ms)")
+        if let memory, let resolved = connection.remoteEndpoint,
+           let record = HubEndpointRecord(endpoint: resolved, hubID: pairing.hubID, savedAt: now()) {
+            memory.save(record)
+        }
         return connection
+    }
+
+    private static func ms(since start: ContinuousClock.Instant) -> Int64 {
+        let d = ContinuousClock.now - start
+        return d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000
     }
 }
 

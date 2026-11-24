@@ -83,6 +83,11 @@ final class HubClientConnection: @unchecked Sendable {
         queue.sync { connection.state == .ready && failure == nil }
     }
 
+    /// The address the connection reached (a Bonjour endpoint resolved to host and port).
+    var remoteEndpoint: NWEndpoint? {
+        queue.sync { connection.currentPath?.remoteEndpoint }
+    }
+
     /// Sends one request and reads one response.
     func exchange(_ request: HTTPRequest, timeout: Duration) async throws(HubError) -> HTTPResponse {
         let result: Result<HTTPResponse, HubError> = await withCheckedContinuation { c in
