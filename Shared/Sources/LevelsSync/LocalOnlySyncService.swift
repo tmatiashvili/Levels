@@ -19,8 +19,19 @@ import os
 public actor LocalOnlySyncService: BatterySyncing {
     /// SYNC-001 R8a: at most one widget reload per 60 s.
     public static let widgetReloadInterval: TimeInterval = 60
+    /// Widget budget: when only levels moved, each by less than ``levelStepForPromptReload``
+    /// points from what widgets last received and none crossed ``lowLevel``, the reload waits
+    /// until this long after the last one. A Mac charging at 1 % a minute asked for a reload
+    /// every minute (60 an hour); the Mac widget reads this Mac's level itself at each load.
+    public static let levelOnlyReloadInterval: TimeInterval = 5 * 60
+    /// A level move this big (points, against what widgets last received) reloads within 60 s.
+    public static let levelStepForPromptReload = 5
+    /// The low-battery mark the views colour by (`DeviceRowModel.lowThreshold`): crossing it
+    /// reloads within 60 s.
+    public static let lowLevel = 20
     /// SYNC-001 R8a (lead's call 17): a write that changes only `updatedAt` reloads widgets
-    /// when the stale moment the widget last received is less than this far away.
+    /// when the stale moment the widget last received is less than this far away (at most half
+    /// the record's freshness threshold).
     public static let staleReloadLead: TimeInterval = 35 * 60
 
     private static let logger = Logger(subsystem: LevelsLog.subsystem, category: LevelsLog.syncCategory)
@@ -51,6 +62,8 @@ public actor LocalOnlySyncService: BatterySyncing {
     private var flushTask: Task<Void, Never>?
     private var lastReloadAt: Date?
     private var trailingReloadTask: Task<Void, Never>?
+    /// When the armed trailing reload fires; `nil` = none armed.
+    private var trailingReloadAt: Date?
     /// The cache's devices after this process's last write or reset; `nil` before the first.
     private var cachedDevices: [DeviceBattery]?
     /// What widgets got at the last reload this process requested; `nil` = unknown.
@@ -240,8 +253,8 @@ public actor LocalOnlySyncService: BatterySyncing {
                 }
             }.value
             cachedDevices = after
-            if Self.needsWidgetReload(before: before, after: after, received: widgetDevices, now: now()) {
-                requestWidgetReload()
+            if let change = Self.widgetChange(before: before, after: after, received: widgetDevices, now: now()) {
+                requestWidgetReload(change)
             }
             return before != after
         } catch {
@@ -267,8 +280,8 @@ public actor LocalOnlySyncService: BatterySyncing {
                 }
             }.value
             cachedDevices = after
-            if Self.needsWidgetReload(before: before, after: after, received: widgetDevices, now: now()) {
-                requestWidgetReload()
+            if let change = Self.widgetChange(before: before, after: after, received: widgetDevices, now: now()) {
+                requestWidgetReload(change)
             }
         } catch {
             Self.logger.error("Cache remove failed: \(String(describing: error), privacy: .public)")
@@ -291,11 +304,18 @@ public actor LocalOnlySyncService: BatterySyncing {
         let ownID = own?.id
         let status = currentStatus
         do {
-            let (before, after) = try await Task.detached(priority: .utility) {
+            let (before, after, older) = try await Task.detached(priority: .utility) {
                 try cache.update { file in
                     let before = SnapshotFile.sorted(file.devices)
+                    var older = Set<DeviceID>()
                     for value in values {
                         if let i = file.devices.firstIndex(where: { $0.id == value.id }) {
+                            // Newest reading wins: an older reading never replaces a newer one
+                            // (another writer, such as a second copy of the app, got there first).
+                            if file.devices[i].updatedAt > value.updatedAt {
+                                older.insert(value.id)
+                                continue
+                            }
                             file.devices[i] = value
                         } else {
                             file.devices.append(value)
@@ -304,15 +324,18 @@ public actor LocalOnlySyncService: BatterySyncing {
                     file.devices = SnapshotFile.sorted(file.devices)
                     if let ownID { file.ownDeviceID = ownID }
                     file.syncStatus = status
-                    return (before, file.devices)
+                    return (before, file.devices, older)
                 }
             }.value
             let t = now()
-            for value in values { written[value.id] = Written(value: value, at: t) }
-            if let own { onOwnWrite(own) }
+            for value in values where !older.contains(value.id) { written[value.id] = Written(value: value, at: t) }
+            if !older.isEmpty {
+                Self.logger.notice("Kept \(older.count) newer cached record(s) over an older reading")
+            }
+            if let own, !older.contains(own.id) { onOwnWrite(own) }
             cachedDevices = after
-            if Self.needsWidgetReload(before: before, after: after, received: widgetDevices, now: t) {
-                requestWidgetReload()
+            if let change = Self.widgetChange(before: before, after: after, received: widgetDevices, now: t) {
+                requestWidgetReload(change)
             }
             return true
         } catch {
@@ -349,46 +372,68 @@ public actor LocalOnlySyncService: BatterySyncing {
 
     // MARK: Widget reloads (SYNC-001 R8a)
 
+    /// How soon a widget reload is due (SYNC-001 R8a).
+    enum WidgetChange: Sendable, Equatable {
+        /// Only levels moved a little: coalesced to ``levelOnlyReloadInterval``.
+        case levelOnly
+        /// Anything else a widget shows: coalesced to ``widgetReloadInterval``.
+        case shown
+    }
+
     /// Lead's call 17: reload only when what a widget shows changed (device set, level,
     /// charging, plugged in, Low Power Mode, name, kind, accessory grouping), or when a
     /// record's stale moment moved and the one widgets last received is less than
-    /// ``staleReloadLead`` away. `received == nil` (no reload yet in this process): any
-    /// change of `devices` reloads.
-    static func needsWidgetReload(before: [DeviceBattery], after: [DeviceBattery],
-                                  received: [DeviceBattery]?, now: Date) -> Bool {
-        guard before != after else { return false }
-        guard let received else { return true }
+    /// ``staleReloadLead`` (or half its threshold) away. `received == nil` (no reload yet): any
+    /// change of `devices` reloads. A change where only levels moved, each by less than
+    /// ``levelStepForPromptReload`` points and none across ``lowLevel``, is ``WidgetChange/levelOnly``.
+    static func widgetChange(before: [DeviceBattery], after: [DeviceBattery],
+                             received: [DeviceBattery]?, now: Date) -> WidgetChange? {
+        guard before != after else { return nil }
+        guard let received else { return .shown }
         let shown = Dictionary(received.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        guard Set(shown.keys) == Set(after.map(\.id)) else { return true }
+        guard Set(shown.keys) == Set(after.map(\.id)) else { return .shown }
+        var levelMoved = false
         for d in after {
-            guard let r = shown[d.id] else { return true }
-            if d.level != r.level || d.isCharging != r.isCharging || d.isPluggedIn != r.isPluggedIn
+            guard let r = shown[d.id] else { return .shown }
+            if d.isCharging != r.isCharging || d.isPluggedIn != r.isPluggedIn
                 || d.isLowPowerMode != r.isLowPowerMode || d.name != r.name || d.kind != r.kind
                 || d.accessory != r.accessory {
-                return true
+                return .shown
             }
+            if d.level != r.level {
+                guard let new = d.level, let old = r.level, abs(new - old) < levelStepForPromptReload,
+                      (new <= lowLevel) == (old <= lowLevel) else { return .shown }
+                levelMoved = true
+            }
+            // The lead is at most half the threshold: a charging Mac's threshold is 30 min, so a
+            // fixed 35 min lead made every write (one a minute while charging) reload widgets.
             let staleAt = FreshnessRule.staleDate(for: r)
-            if FreshnessRule.staleDate(for: d) != staleAt, staleAt < now.addingTimeInterval(staleReloadLead) {
-                return true
+            let lead = min(staleReloadLead, FreshnessRule.threshold(for: r) / 2)
+            if FreshnessRule.staleDate(for: d) != staleAt, staleAt < now.addingTimeInterval(lead) {
+                return .shown
             }
         }
-        return false
+        return levelMoved ? .levelOnly : nil
     }
 
-    /// The first request in a quiet period reloads at once; requests within 60 s of the
-    /// last reload mark one trailing reload at the end of the window.
-    private func requestWidgetReload() {
+    /// The first request in a quiet period reloads at once. A request inside its window
+    /// after the last reload (60 s, or 5 min for ``WidgetChange/levelOnly``) marks one
+    /// trailing reload at the window's end; a more urgent request moves it earlier.
+    private func requestWidgetReload(_ change: WidgetChange = .shown) {
         let t = now()
-        if let last = lastReloadAt, t.timeIntervalSince(last) < Self.widgetReloadInterval {
-            guard trailingReloadTask == nil else { return }
-            let sleep = timer(Self.duration(last.addingTimeInterval(Self.widgetReloadInterval).timeIntervalSince(t)))
-            trailingReloadTask = Task {
-                do { try await sleep() } catch { return }  // cancelled: flushWidgetReload fired it
-                guard !Task.isCancelled else { return }
-                self.fireTrailingReload()
-            }
-        } else {
+        let interval = change == .levelOnly ? Self.levelOnlyReloadInterval : Self.widgetReloadInterval
+        guard let last = lastReloadAt, t.timeIntervalSince(last) < interval else {
             fireReload(at: t)
+            return
+        }
+        let due = last.addingTimeInterval(interval)
+        if let armed = trailingReloadAt, armed <= due { return }
+        trailingReloadTask?.cancel()
+        trailingReloadAt = due
+        let sleep = timer(Self.duration(due.timeIntervalSince(t)))
+        trailingReloadTask = Task {
+            do { try await sleep() } catch { return }
+            self.fireTrailingReload(due: due)
         }
     }
 
@@ -397,17 +442,20 @@ public actor LocalOnlySyncService: BatterySyncing {
     /// is suspended soon after, and the trailing reload's timer would never fire, leaving the
     /// widget on the older data until its own next reload.
     public func flushWidgetReload() {
-        guard let task = trailingReloadTask else { return }
-        task.cancel()
-        fireTrailingReload()
+        guard let due = trailingReloadAt, trailingReloadTask != nil else { return }
+        fireTrailingReload(due: due)
     }
 
-    private func fireTrailingReload() {
-        trailingReloadTask = nil
+    private func fireTrailingReload(due: Date) {
+        guard trailingReloadAt == due else { return }  // replaced by an earlier one, or already fired
         fireReload(at: now())
     }
 
+    /// Any reload covers the trailing one, so it is dropped.
     private func fireReload(at t: Date) {
+        trailingReloadTask?.cancel()
+        trailingReloadTask = nil
+        trailingReloadAt = nil
         lastReloadAt = t
         if let cachedDevices { widgetDevices = cachedDevices }
         widgetReloader()
