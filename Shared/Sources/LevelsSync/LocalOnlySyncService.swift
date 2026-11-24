@@ -111,6 +111,9 @@ public actor LocalOnlySyncService: BatterySyncing {
     /// ``SyncStatus/localOnly`` on its own; a wrapping hub service may set another.
     public var status: SyncStatus { currentStatus }
 
+    /// SYNC-001 R15a: `false` after "Remove all my data" until reporting is turned back on.
+    public nonisolated var isReportingEnabled: Bool { reporting.isEnabled }
+
     /// Hub mode (NET-003 R3, R9): records a status (and, when given, the last good contact
     /// with the Mac) in the cache so the UI and widgets read it. Later writes keep it. A
     /// status change requests a widget reload (the away footer, NET-004 R13). Nothing is

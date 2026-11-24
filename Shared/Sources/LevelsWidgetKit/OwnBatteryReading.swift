@@ -59,3 +59,14 @@ extension SnapshotFile {
         return file
     }
 }
+
+extension SnapshotFile {
+    /// The own record with `reading` laid over it (``overlaying(own:)``), for the widget to send
+    /// to the Mac. `nil` when the reading has no level, is not newer than the cached record, or
+    /// there is no own record yet (the app writes it on its first run).
+    public func ownRecordToSend(_ reading: OwnBatteryReading?) -> DeviceBattery? {
+        guard let reading, reading.level != nil, let ownDeviceID else { return nil }
+        let record = overlaying(own: reading).devices.first { $0.id == ownDeviceID }
+        return record?.updatedAt == reading.readAt ? record : nil
+    }
+}

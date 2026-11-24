@@ -52,6 +52,12 @@ public actor LocalNetworkSyncService: BatterySyncing {
     /// Push (ADR-0023, PUSH-001 R72): this iPhone's tokens and relay grants. `nil` = push off
     /// (`LEVELS_PUSH_ENABLED = NO`): `GET /v1/push-key` and `PUT /v1/push-tokens` are never sent.
     private let push: (any PushRegistrationSource)?
+    /// The last own reading the Mac accepted (App Group, shared with the widget).
+    private let uploaded: UploadedReadingMemory
+    /// A fresh read of this iPhone's own record (`UIDevice` in the app), or `nil` when it
+    /// can't be read. Each refresh and long-poll round reads it, so a path that reaches the
+    /// Mac without a report first still sends a changed or 5-minute-old reading.
+    private let ownRecord: (@Sendable () async -> DeviceBattery?)?
 
     private var client: HubClient?
     /// The tokens (and the Mac key their grant names) the Mac acknowledged on this connection;
@@ -82,8 +88,12 @@ public actor LocalNetworkSyncService: BatterySyncing {
                                     cache: SnapshotCache, etagSuite: String? = nil, persistsETag: Bool = true,
                                     now: @escaping @Sendable () -> Date = Date.init, clock: C = ContinuousClock(),
                                     onChange: @escaping @Sendable () -> Void = {},
-                                    push: (any PushRegistrationSource)? = nil) {
+                                    push: (any PushRegistrationSource)? = nil,
+                                    uploaded: UploadedReadingMemory = .inMemory(),
+                                    ownRecord: (@Sendable () async -> DeviceBattery?)? = nil) {
         self.push = push
+        self.uploaded = uploaded
+        self.ownRecord = ownRecord
         self.local = local
         self.outbox = outbox
         self.transport = transport
@@ -116,8 +126,13 @@ public actor LocalNetworkSyncService: BatterySyncing {
 
     /// R2: the inner service writes first; the outbox is then sent if the Mac is paired. The
     /// send never holds the report for more than ``sendLimit``.
+    ///
+    /// The own reading also goes to the outbox when ``ReadingUploadPolicy`` says the Mac needs
+    /// it, whatever the cache write did: the cache holds level changes for up to 60 s and
+    /// skips unchanged readings, and before this a held or skipped write was never sent.
     public func report(_ readings: [DeviceBattery], reason: ReportReason) async -> ReportOutcome {
         let outcome = await local.report(readings, reason: reason)
+        if let own = readings.first(where: { $0.kind != .accessory }) { queueIfNeeded(own) }
         if outbox.value != nil, isPaired {
             await Self.runLimited(Self.sendLimit, sleep: sleep) { await self.sendOutbox() }
         }
@@ -131,6 +146,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
             if !isPaired { await setStatus(.notPaired) }
             return await cacheReadable()
         }
+        await queueFreshOwnReading()
         if outbox.value != nil, let error = await sendOutbox(), Self.isUnreachable(error) {
             return await cacheReadable()
         }
@@ -204,6 +220,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         setETag(nil)
         resetPushState()
         pushRouteMissing = false
+        uploaded.clear()  // a new Mac has none of our readings
         await refresh(.userPull)
     }
 
@@ -219,6 +236,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
             }
         }
         outbox.clear()
+        uploaded.clear()
         setETag(nil)
         resetPushState()
         await setStatus(.notPaired)
@@ -240,6 +258,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         }
         try await local.removeAllData()
         outbox.clear()
+        uploaded.clear()
         setETag(nil)
         onChange()
     }
@@ -266,12 +285,34 @@ public actor LocalNetworkSyncService: BatterySyncing {
         return made
     }
 
-    /// R4. Returns the error when the send failed (the slot is kept), `nil` otherwise.
+    /// Puts `own` in the outbox when the Mac needs it (``ReadingUploadPolicy``) and it is newer
+    /// than what the outbox holds. Nothing while reporting is off (SYNC-001 R15a).
+    private func queueIfNeeded(_ own: DeviceBattery) {
+        guard local.isReportingEnabled,
+              ReadingUploadPolicy.shouldUpload(own, last: uploaded.load(), now: now()) else { return }
+        if let queued = outbox.value, queued.id == own.id, queued.updatedAt >= own.updatedAt { return }
+        outbox.put(own)
+    }
+
+    /// Reads this iPhone's battery now (``ownRecord``) and queues it when the Mac needs it.
+    private func queueFreshOwnReading() async {
+        guard let ownRecord, local.isReportingEnabled, let own = await ownRecord() else { return }
+        queueIfNeeded(own)
+    }
+
+    /// R4. Returns the error when the send failed (the slot is kept), `nil` otherwise. A
+    /// queued copy of what the Mac already has is dropped unsent.
     @discardableResult
     private func sendOutbox() async -> HubError? {
         guard let record = outbox.value, let client = clientIfReady() else { return nil }
+        if ReadingUploadPolicy.isAlreadyUploaded(record, last: uploaded.load()) {
+            outbox.clear(ifStill: record)
+            return nil
+        }
         do {
             try await client.post(record)
+            uploaded.record(record, at: now())
+            Self.logger.notice("POST /v1/readings level=\(record.level.map(String.init) ?? "none", privacy: .public) accepted")
             outbox.clear(ifStill: record)
             if Self.isUnreachableStatus(currentStatus) { await setStatus(.localOnly) }
             return nil
@@ -410,6 +451,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         var failures = 0
         while !Task.isCancelled, generation == liveGeneration {
             guard let client = clientIfReady() else { return }
+            await queueFreshOwnReading()
             if outbox.value != nil { await sendOutbox() }
             do {
                 let fetch = try await client.snapshot(ifNoneMatch: etag, wait: Self.liveWait)
