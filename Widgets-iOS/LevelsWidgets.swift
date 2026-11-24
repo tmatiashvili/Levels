@@ -53,7 +53,7 @@ struct PhoneWidgetView: View {
                 .containerBackground(.clear, for: .widget)
         default:
             DevicesWidgetView(entry: entry)  // small, medium, large and their empty state
-                .containerBackground(for: .widget) { WidgetGlassBackground() }  // UI-003 R10
+                .containerBackground(.fill.tertiary, for: .widget)  // UI-003 R10
         }
     }
 }
