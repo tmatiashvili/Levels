@@ -35,6 +35,7 @@ Owner decisions N–Q (2026-11-24): Levels becomes a paid product. Free shows th
 | [MON-001](MON-001-levels-pro-entitlements.md) | Levels Pro products and entitlements | Draft | SYNC-002, NET-004, UI-003 |
 | [MON-002](MON-002-paywall-and-gating.md) | Levels Pro paywall and gates | Draft | MON-001, UI-001, UI-002, UI-003, NET-004 |
 | [REL-001](REL-001-app-store-readiness.md) | App Store and Mac download readiness | Draft | MON-001, MON-002, SYNC-001, NET-004 |
+| [DEMO-001](DEMO-001-sample-devices-mode.md) | Try with sample devices (demo mode) | Ready | NET-004, UI-002, UI-003, MON-001, MON-002 |
 
 Order: MON-001, then MON-002, both on the free team; REL-001's "now" items (R1) in parallel; the rest of REL-001 at enrollment.
 
