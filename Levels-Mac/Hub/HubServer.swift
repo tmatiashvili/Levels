@@ -54,11 +54,10 @@ import os
     @ObservationIgnored let window: PairingWindow
     @ObservationIgnored private let listener: HubListener
     @ObservationIgnored private let hubIDBox: HubIDBox
-    /// Consecutive failed starts; 0 after a start succeeds.
-    @ObservationIgnored private var failures = 0
+    /// Backoff, when to show `.failed`, and retry-now on a path change.
+    @ObservationIgnored private var retryPolicy = HubRetryPolicy()
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private let pathMonitor = NWPathMonitor()
-    @ObservationIgnored private var lastPath: NWPath.Status?
     @ObservationIgnored private var expiryTask: Task<Void, Never>?
     @ObservationIgnored private var evaluating = false
     @ObservationIgnored private var evaluateAgain = false
@@ -160,7 +159,7 @@ import os
         status = .starting
         do {
             let port = try await listener.start()
-            failures = 0
+            retryPolicy.reset()
             cancelRetry()
             status = .sharing
             Self.logger.notice("Hub sharing as \(HubProtocol.serviceName(tag: self.tag), privacy: .public) on port \(port, privacy: .public)")
@@ -170,23 +169,14 @@ import os
         }
     }
 
-    /// Backoff between retries: 5 s, 15 s, 1 min, then every 5 min.
-    static func retryDelay(afterFailures n: Int) -> Duration {
-        switch n {
-        case ...1: .seconds(5)
-        case 2: .seconds(15)
-        case 3: .seconds(60)
-        default: .seconds(300)
-        }
-    }
-
     /// The listener could not start (or a running one failed). The first failure shows
     /// "Starting…" and retries after 5 s; after that the status is "Couldn't start sharing"
-    /// (with Retry) while retries continue with backoff, and a network path change retries at once.
+    /// (with Retry) while retries continue with backoff, and a network path change retries at
+    /// once (``HubRetryPolicy``).
     private func startFailed() async {
-        failures += 1
-        status = failures == 1 ? .starting : .failed
-        scheduleRetry(after: Self.retryDelay(afterFailures: failures))
+        let retry = retryPolicy.startFailed()
+        status = retry.showsFailed ? .failed : .starting
+        scheduleRetry(after: retry.delay)
     }
 
     private func scheduleRetry(after delay: Duration) {
@@ -207,8 +197,7 @@ import os
     /// A network change (Wi-Fi back, another interface) is the likeliest moment a failed
     /// start can succeed.
     private func pathChanged(_ path: NWPath.Status) {
-        defer { lastPath = path }
-        guard lastPath != nil, path != lastPath, path == .satisfied, retryTask != nil else { return }
+        guard retryPolicy.pathChanged(to: path, retryPending: retryTask != nil) else { return }
         Self.logger.notice("Network path changed; retrying the hub listener now")
         cancelRetry()
         Task { await evaluate() }
@@ -233,7 +222,10 @@ import os
             }
         case .ready:
             // Also after a running listener came back from `.waiting`.
-            if status == .starting || status == .failed, retryTask == nil { status = .sharing }
+            // A ready event that arrives while a retry waits is from an older listener.
+            guard retryTask == nil else { break }
+            retryPolicy.reset()
+            if status == .starting || status == .failed { status = .sharing }
         case .waiting(let reason):
             // Network.framework brings it back by itself; keep the listener (no Retry needed).
             Self.logger.notice("Hub listener waiting for the network: \(reason, privacy: .public)")
@@ -253,7 +245,7 @@ import os
             Self.logger.error("Pairing: device ID unavailable")
             return nil
         }
-        failures = 0
+        retryPolicy.reset()
         cancelRetry()  // the window change re-evaluates and starts the listener now
         if status == .failed { status = .starting }
         let code = window.open(hub: HubInfo(hubID: hubIDBox.value, hubDeviceID: id, hubName: hubName()))
