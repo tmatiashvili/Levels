@@ -41,7 +41,7 @@ export interface GrantBody {
   env: ApnsEnvironment;
   /** The Mac's P-256 signing public key, X9.62 uncompressed (65 bytes), base64url. */
   mac: string;
-  /** Device ID for rate limiting: first 16 bytes of SHA-256(App Attest key ID), base64url. */
+  /** Device ID for rate limiting: deviceIdFromKeyId(decoded App Attest key ID). */
   dev: string;
   /** Covered tokens: [kind, tokenHash]. */
   t: [PushKind, string][];
@@ -98,8 +98,12 @@ export async function tokenHash(hexToken: string): Promise<string> {
   return toBase64Url(digest.slice(0, 16));
 }
 
-export async function deviceIdFromKeyId(keyId: string): Promise<string> {
-  return toBase64Url((await sha256(keyId)).slice(0, 16));
+/**
+ * Device ID for rate limiting: first 16 bytes of SHA-256 of the decoded 32-byte App Attest
+ * key ID, base64url. Derived from the bytes, never from the client's spelling of them.
+ */
+export async function deviceIdFromKeyId(keyIdBytes: Uint8Array): Promise<string> {
+  return toBase64Url((await sha256(keyIdBytes)).slice(0, 16));
 }
 
 export function randomNonce(): string {

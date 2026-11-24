@@ -132,6 +132,7 @@ export async function signedPush(
         "levels-grant": grant,
         "levels-timestamp": ts,
         "levels-signature": toBase64Url(sig),
+        "content-length": String(sent.length),
       },
       body: sent,
     }),
@@ -140,12 +141,14 @@ export async function signedPush(
   );
 }
 
+/** Node's Request doesn't add Content-Length; the relay requires it, so the helpers set it. */
 export function post(w: TestWorld, path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+  const bytes = utf8.encode(typeof body === "string" ? body : JSON.stringify(body));
   return handle(
     new Request(`https://relay.example${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", ...headers },
-      body: typeof body === "string" ? body : JSON.stringify(body),
+      headers: { "content-type": "application/json", "content-length": String(bytes.length), ...headers },
+      body: bytes,
     }),
     w.env,
     w.deps,

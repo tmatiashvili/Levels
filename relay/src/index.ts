@@ -10,7 +10,7 @@
 import { ApnsClient, ProviderTokenCache, systemClock, type Clock, type Transport } from "./apns.js";
 import { AttestError, verifyAssertion, verifyAttestation } from "./appattest.js";
 import { AuthError, authenticatePush, coverageFor } from "./auth.js";
-import { fromBase64, fromBase64Url, hmac, hmacKey, toBase64Url } from "./bytes.js";
+import { fromBase64, fromBase64Url, hmac, hmacKey, toBase64, toBase64Url } from "./bytes.js";
 import type { Env } from "./env.js";
 import { DurableRateLimiter, LIMITS, type RateLimiter } from "./ratelimit.js";
 import {
@@ -67,11 +67,41 @@ function json(status: number, body: unknown, extra: Record<string, string> = {})
 
 const err = (status: number, code: string, extra?: Record<string, string>) => json(status, { error: code }, extra);
 
-async function readBody(request: Request): Promise<Uint8Array | undefined> {
-  const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_BODY_BYTES) return undefined;
-  const buf = new Uint8Array(await request.arrayBuffer());
-  return buf.length > MAX_BODY_BYTES ? undefined : buf;
+type BodyRead = { ok: true; bytes: Uint8Array } | { ok: false; status: number; code: string };
+
+/**
+ * Reads the body as a stream and stops as soon as it passes MAX_BODY_BYTES, so an
+ * oversized body is never buffered. A request must declare its length: without a
+ * valid Content-Length it gets 411 (a missing header is not "0").
+ */
+async function readBody(request: Request): Promise<BodyRead> {
+  const raw = request.headers.get("content-length")?.trim();
+  if (raw === undefined || !/^\d{1,10}$/.test(raw)) return { ok: false, status: 411, code: "length_required" };
+  if (Number(raw) > MAX_BODY_BYTES) {
+    await request.body?.cancel().catch(() => undefined);
+    return { ok: false, status: 400, code: "body_too_large" };
+  }
+  if (!request.body) return { ok: true, bytes: new Uint8Array(0) };
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return { ok: false, status: 400, code: "body_too_large" };
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.byteLength;
+  }
+  return { ok: true, bytes: out };
 }
 
 function parseJson(bytes: Uint8Array): unknown {
@@ -95,8 +125,9 @@ export async function handle(request: Request, env: Env, deps: Deps): Promise<Re
     return err(500, "relay_misconfigured");
   }
 
-  const body = await readBody(request);
-  if (!body) return err(400, "body_too_large");
+  const read = await readBody(request);
+  if (!read.ok) return err(read.status, read.code);
+  const body = read.bytes;
 
   try {
     switch (url.pathname) {
@@ -212,6 +243,18 @@ async function openChallenge(signer: Signer, value: unknown, now: number): Promi
   return value;
 }
 
+/** Decodes an App Attest key ID (standard or URL-safe base64 of 32 bytes). */
+function decodeKeyId(keyId: string): Uint8Array {
+  let bytes: Uint8Array;
+  try {
+    bytes = fromBase64(keyId);
+  } catch {
+    throw new BadRequest("key_id_invalid");
+  }
+  if (bytes.length !== 32) throw new BadRequest("key_id_invalid");
+  return bytes;
+}
+
 function appId(env: Env): string {
   return `${env.APPLE_TEAM_ID}.${env.IOS_BUNDLE_ID}`;
 }
@@ -224,6 +267,10 @@ async function attest(request: Request, body: Uint8Array, env: Env, deps: Deps, 
   if (typeof b !== "object" || b === null) throw new BadRequest("body_not_object");
   const challengeStr = await openChallenge(signer, b.challenge, now);
   if (typeof b.keyId !== "string" || typeof b.attestation !== "string") throw new BadRequest("fields_missing");
+  // The key ID is SHA-256 of the attested key: 32 bytes. Everything downstream (the
+  // credential, the device ID behind every rate-limit bucket) uses the canonical spelling
+  // of those bytes, so base64 variants of one key can't mint separate identities.
+  const keyIdBytes = decodeKeyId(b.keyId);
   let attestation: Uint8Array;
   try {
     attestation = fromBase64(b.attestation);
@@ -231,7 +278,7 @@ async function attest(request: Request, body: Uint8Array, env: Env, deps: Deps, 
     throw new BadRequest("attestation_not_base64");
   }
   const result = await verifyAttestation({
-    keyId: b.keyId,
+    keyId: toBase64(keyIdBytes),
     attestation,
     challenge: challengeStr,
     appId: appId(env),
@@ -240,7 +287,7 @@ async function attest(request: Request, body: Uint8Array, env: Env, deps: Deps, 
   });
   const cred: CredentialBody = {
     v: 1,
-    kid: b.keyId,
+    kid: toBase64(keyIdBytes),
     pk: toBase64Url(result.publicKeyRaw),
     env: result.env,
     iat: now,
@@ -306,7 +353,12 @@ async function grant(request: Request, body: Uint8Array, env: Env, deps: Deps, s
     return [e.kind, e.hash];
   });
 
-  const dev = await deviceIdFromKeyId(cred.kid);
+  let dev: string;
+  try {
+    dev = await deviceIdFromKeyId(decodeKeyId(cred.kid));
+  } catch {
+    throw new AuthError("credential_invalid");
+  }
   const d = await deps.limiter.hit(`g:${dev}`, [{ w: 3600, max: 30 }]);
   if (!d.allowed) return err(429, "rate_limited", { "retry-after": String(d.retryAfter) });
 
