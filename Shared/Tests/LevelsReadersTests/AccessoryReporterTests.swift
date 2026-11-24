@@ -68,6 +68,25 @@ struct AccessoryReporterTests {
         await r.stop()
     }
 
+    @Test func powerSourceChangeReportsChargingNow() async {
+        let reader = FixedAccessoryReader(airPods(100, 100, 91))
+        let r = reporter(reader)
+        await r.start()
+        await waitFor { [sync] in await sync.calls.count == 1 }
+        #expect(await sync.calls[0].devices.allSatisfy { !$0.isCharging })
+        var charging = airPods(100, 100, 92)
+        for i in charging.readings.indices {
+            charging.readings[i].isCharging = true
+            charging.readings[i].isPluggedIn = true
+        }
+        reader.emit(charging, .powerSources)
+        await waitFor { [sync] in await sync.calls.count == 2 }
+        let call = await sync.calls[1]
+        #expect(call.reason == .batteryChange)
+        #expect(call.devices.count == 3 && call.devices.allSatisfy { $0.isCharging && $0.isPluggedIn == true })
+        await r.stop()
+    }
+
     @Test func ADR0014_pollIs5MinWhileConnectedAnd15OtherwiseWithTolerance() async {
         let reader = FixedAccessoryReader(airPods(40, 35, 80))
         let r = reporter(reader)

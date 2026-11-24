@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Battery Provides Time Remaining</key>
+	<true/>
+	<key>Battery Service Flags</key>
+	<integer>4</integer>
+	<key>Battery Service State</key>
+	<integer>0</integer>
+	<key>BatteryPacks</key>
+	<array>
+		<dict>
+			<key>BatteryHealth</key>
+			<dict>
+				<key>Battery Service Flags</key>
+				<integer>4</integer>
+				<key>Battery Service State</key>
+				<integer>0</integer>
+				<key>Maximum Capacity Percent</key>
+				<integer>103</integer>
+				<key>fccAvgHistoryCount</key>
+				<integer>42</integer>
+				<key>fccDaySampleAvg</key>
+				<integer>6157</integer>
+				<key>fccDaySampleCount</key>
+				<integer>96</integer>
+				<key>ncc</key>
+				<integer>99</integer>
+				<key>nccAvg</key>
+				<integer>6149</integer>
+			</dict>
+			<key>PackID</key>
+			<integer>0</integer>
+		</dict>
+	</array>
+	<key>Current</key>
+	<integer>0</integer>
+	<key>Current Capacity</key>
+	<integer>80</integer>
+	<key>DesignCycleCount</key>
+	<integer>300</integer>
+	<key>Hardware Serial Number</key>
+	<string>FAKESERIAL000000</string>
+	<key>Is Charged</key>
+	<false/>
+	<key>Is Charging</key>
+	<false/>
+	<key>Is Present</key>
+	<true/>
+	<key>LPM Active</key>
+	<false/>
+	<key>Max Capacity</key>
+	<integer>100</integer>
+	<key>Name</key>
+	<string>InternalBattery-0</string>
+	<key>Power Source ID</key>
+	<integer>22872163</integer>
+	<key>Power Source State</key>
+	<string>AC Power</string>
+	<key>Time to Empty</key>
+	<integer>0</integer>
+	<key>Time to Full Charge</key>
+	<integer>0</integer>
+	<key>Transport Type</key>
+	<string>Internal</string>
+	<key>Type</key>
+	<string>InternalBattery</string>
+</dict>
+</plist>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Accessory Category</key>
+	<string>Audio Battery Case</string>
+	<key>Accessory Identifier</key>
+	<string>00000000-0000-0000-0000-0000000000C1</string>
+	<key>Current Capacity</key>
+	<integer>93</integer>
+	<key>Dynamic End of Charging Engaged</key>
+	<false/>
+	<key>Group Identifier</key>
+	<string>00000000-0000-0000-0000-0000000000A1</string>
+	<key>Is Charged</key>
+	<integer>0</integer>
+	<key>Is Charging</key>
+	<true/>
+	<key>Is Present</key>
+	<true/>
+	<key>Low Warn Level</key>
+	<integer>25</integer>
+	<key>Max Capacity</key>
+	<integer>100</integer>
+	<key>Name</key>
+	<string>TPods Case</string>
+	<key>Optimized Battery Charging Engaged</key>
+	<false/>
+	<key>Part Identifier</key>
+	<string>Case</string>
+	<key>Power Source ID</key>
+	<integer>42013662</integer>
+	<key>Power Source State</key>
+	<string>AC Power</string>
+	<key>Product ID</key>
+	<integer>8228</integer>
+	<key>Time to Full Charge</key>
+	<integer>0</integer>
+	<key>Transport Type</key>
+	<string>Bluetooth LE</string>
+	<key>Type</key>
+	<string>Accessory Source</string>
+	<key>Vendor ID</key>
+	<integer>76</integer>
+	<key>Vendor ID Source</key>
+	<integer>1</integer>
+</dict>
+</plist>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Accessory Category</key>
+	<string>Headset</string>
+	<key>Accessory Identifier</key>
+	<string>00000000-0000-0000-0000-0000000000B1</string>
+	<key>Combined Parts</key>
+	<array>
+		<dict>
+			<key>Accessory Category</key>
+			<string>Headset</string>
+			<key>Accessory Identifier</key>
+			<string>00000000-0000-0000-0000-0000000000B1</string>
+			<key>Current Capacity</key>
+			<integer>100</integer>
+			<key>Dynamic End of Charging Engaged</key>
+			<false/>
+			<key>Group Identifier</key>
+			<string>00000000-0000-0000-0000-0000000000A1</string>
+			<key>Is Charged</key>
+			<integer>1</integer>
+			<key>Is Charging</key>
+			<true/>
+			<key>Is Present</key>
+			<true/>
+			<key>Low Warn Level</key>
+			<integer>20</integer>
+			<key>Max Capacity</key>
+			<integer>100</integer>
+			<key>Name</key>
+			<string>TPods</string>
+			<key>Optimized Battery Charging Engaged</key>
+			<false/>
+			<key>Part Identifier</key>
+			<string>Left</string>
+			<key>Part Name</key>
+			<string>TPods 🅛</string>
+			<key>Power Source State</key>
+			<string>AC Power</string>
+			<key>Product ID</key>
+			<integer>8228</integer>
+			<key>Time to Full Charge</key>
+			<integer>0</integer>
+			<key>Transport Type</key>
+			<string>Bluetooth LE</string>
+			<key>Type</key>
+			<string>Accessory Source</string>
+			<key>Vendor ID</key>
+			<integer>76</integer>
+			<key>Vendor ID Source</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>Accessory Category</key>
+			<string>Headset</string>
+			<key>Accessory Identifier</key>
+			<string>00000000-0000-0000-0000-0000000000B1</string>
+			<key>Current Capacity</key>
+			<integer>100</integer>
+			<key>Dynamic End of Charging Engaged</key>
+			<false/>
+			<key>Group Identifier</key>
+			<string>00000000-0000-0000-0000-0000000000A1</string>
+			<key>Is Charged</key>
+			<integer>1</integer>
+			<key>Is Charging</key>
+			<true/>
+			<key>Is Present</key>
+			<true/>
+			<key>Low Warn Level</key>
+			<integer>20</integer>
+			<key>Max Capacity</key>
+			<integer>100</integer>
+			<key>Name</key>
+			<string>TPods</string>
+			<key>Optimized Battery Charging Engaged</key>
+			<false/>
+			<key>Part Identifier</key>
+			<string>Right</string>
+			<key>Part Name</key>
+			<string>TPods 🅡</string>
+			<key>Power Source State</key>
+			<string>AC Power</string>
+			<key>Product ID</key>
+			<integer>8228</integer>
+			<key>Time to Full Charge</key>
+			<integer>0</integer>
+			<key>Transport Type</key>
+			<string>Bluetooth LE</string>
+			<key>Type</key>
+			<string>Accessory Source</string>
+			<key>Vendor ID</key>
+			<integer>76</integer>
+			<key>Vendor ID Source</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>Current Capacity</key>
+	<integer>100</integer>
+	<key>Dynamic End of Charging Engaged</key>
+	<false/>
+	<key>Group Identifier</key>
+	<string>00000000-0000-0000-0000-0000000000A1</string>
+	<key>Is Charged</key>
+	<integer>1</integer>
+	<key>Is Charging</key>
+	<true/>
+	<key>Is Present</key>
+	<true/>
+	<key>Low Warn Level</key>
+	<integer>20</integer>
+	<key>Max Capacity</key>
+	<integer>100</integer>
+	<key>Name</key>
+	<string>TPods</string>
+	<key>Optimized Battery Charging Engaged</key>
+	<false/>
+	<key>Part Identifier</key>
+	<string>Combined</string>
+	<key>Power Source ID</key>
+	<integer>42013663</integer>
+	<key>Power Source State</key>
+	<string>AC Power</string>
+	<key>Product ID</key>
+	<integer>8228</integer>
+	<key>Time to Full Charge</key>
+	<integer>0</integer>
+	<key>Transport Type</key>
+	<string>Bluetooth LE</string>
+	<key>Type</key>
+	<string>Accessory Source</string>
+	<key>Vendor ID</key>
+	<integer>76</integer>
+	<key>Vendor ID Source</key>
+	<integer>1</integer>
+</dict>
+</plist>

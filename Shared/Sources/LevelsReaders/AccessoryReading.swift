@@ -16,22 +16,30 @@ public struct AccessoryReading: Sendable, Equatable {
     /// 0...100.
     public var level: Int
     public var readAt: Date
+    /// Only macOS's accessory power sources (`pmset -g accps`, ``PowerSourceAccessoryParser``)
+    /// report charging; the IOKit and `system_profiler` readings leave it `false`.
+    public var isCharging: Bool
+    /// `nil` when the source does not say whether the battery is on external power.
+    public var isPluggedIn: Bool?
 
-    public init(key: String, name: String, kind: AccessoryKind, component: AccessoryComponent, level: Int, readAt: Date) {
+    public init(key: String, name: String, kind: AccessoryKind, component: AccessoryComponent, level: Int, readAt: Date,
+                isCharging: Bool = false, isPluggedIn: Bool? = nil) {
         self.key = key
         self.name = name
         self.kind = kind
         self.component = component
         self.level = DeviceBattery.clampedLevel(level)
         self.readAt = readAt
+        self.isCharging = isCharging
+        self.isPluggedIn = isPluggedIn
     }
 
     /// The record ID: `UUIDv5("accessory:<key>:<component>")` (SYNC-002 R2, MAC-003 R3).
     public var id: DeviceID { DeviceID.accessory(key: key, component: component) }
 
     /// The synced value: `type = accessory`, `parentDeviceId` = this Mac, one shared
-    /// `accessoryGroupId` per accessory (R3a). Neither source exposes charging, so
-    /// `isCharging = false` and `isPluggedIn`/`isLowPowerMode` are absent (ADR-0015).
+    /// `accessoryGroupId` per accessory (R3a). Charging and plugged-in come from the reading
+    /// (set only by the power-source reader, ADR-0015 amendment); `isLowPowerMode` is absent.
     public func deviceBattery(parent: DeviceID) -> DeviceBattery {
         DeviceBattery(
             id: id,
@@ -40,8 +48,8 @@ public struct AccessoryReading: Sendable, Equatable {
             accessory: AccessoryInfo(parentDeviceID: parent, kind: kind,
                                      groupID: DeviceID.accessoryGroup(key: key), component: component),
             level: level,
-            isCharging: false,
-            isPluggedIn: nil,
+            isCharging: isCharging,
+            isPluggedIn: isPluggedIn,
             isLowPowerMode: nil,
             updatedAt: readAt
         )
@@ -67,7 +75,8 @@ public struct AccessoryScan: Sendable, Equatable {
     public static let empty = AccessoryScan()
 
     /// Joins scans from several sources. The first reading for a record ID wins, so pass
-    /// the IOKit scan (1 % steps) before `system_profiler` (5 % steps).
+    /// the IOKit scan (1 % steps), then the power-source scan (1 % steps and charging),
+    /// before `system_profiler` (5 % steps, no charging).
     public static func merged(_ scans: [AccessoryScan]) -> AccessoryScan {
         var seen = Set<DeviceID>()
         var out = AccessoryScan()
@@ -100,6 +109,9 @@ public enum AccessoryChange: Sendable, Equatable {
     case bluetoothConnected
     /// A Bluetooth device disconnected: scan now (R4: nothing is written for it).
     case bluetoothDisconnected
+    /// macOS's accessory power sources changed (an AirPods level or charging state, heard
+    /// over Bluetooth LE even while the AirPods are not connected): scan now.
+    case powerSources
 }
 
 /// Normalises Bluetooth addresses to the `accessoryKey` form (MAC-003 R3).

@@ -13,6 +13,8 @@ import LevelsModel
 public enum SystemProfilerBluetoothParser {
     static let rootKey = "SPBluetoothDataType"
     static let connectedKey = "device_connected"
+    static let notConnectedKey = "device_not_connected"
+    static let productKey = "device_productID"
     static let controllerKey = "controller_properties"
     static let addressKey = "device_address"
     static let minorTypeKey = "device_minorType"
@@ -85,6 +87,47 @@ public enum SystemProfilerBluetoothParser {
                                              kind: kind, component: component, level: level, readAt: now))
         }
         scan.readings.append(contentsOf: readings)
+    }
+
+    /// Every device paired with this Mac, connected or not, with what identifies it. The
+    /// power-source parser uses it to tie an AirPods power source to its Bluetooth address
+    /// (ADR-0015 amendment). No levels: `device_not_connected` levels have no reading time.
+    /// Devices without a valid address are left out.
+    public static func pairedDevices(_ data: Data) -> [PairedBluetoothDevice] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sections = root[rootKey] as? [[String: Any]] else { return [] }
+        var out: [PairedBluetoothDevice] = []
+        for section in sections {
+            for (listKey, connected) in [(connectedKey, true), (notConnectedKey, false)] {
+                guard let entries = section[listKey] as? [[String: Any]] else { continue }
+                for entry in entries {
+                    for (name, value) in entry {
+                        guard let props = value as? [String: Any],
+                              let raw = props[addressKey] as? String, let key = BluetoothAddress.normalized(raw)
+                        else { continue }
+                        let minorType = (props[minorTypeKey] as? String) ?? ""
+                        let isHeadphones = minorType.localizedCaseInsensitiveContains("headphone")
+                            || minorType.localizedCaseInsensitiveContains("headset")
+                        let vendor = props[vendorKey] as? String
+                        let kind = accessoryKind(minorType: minorType, vendor: vendor, isHeadphones: isHeadphones)
+                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        out.append(PairedBluetoothDevice(
+                            key: key, name: trimmed.isEmpty ? defaultName(kind) : trimmed, kind: kind,
+                            vendorID: hexID(vendor), productID: hexID(props[productKey] as? String),
+                            isHeadphones: isHeadphones, isConnected: connected))
+                    }
+                }
+            }
+        }
+        return out.sorted { $0.key < $1.key }
+    }
+
+    /// `"0x2024"` → 0x2024; anything else is `nil`.
+    static func hexID(_ value: String?) -> Int? {
+        guard let s = value?.trimmingCharacters(in: .whitespaces).lowercased(), s.hasPrefix("0x") else { return nil }
+        let digits = s.dropFirst(2)
+        guard (1...4).contains(digits.count), digits.allSatisfy(\.isHexDigit) else { return nil }
+        return Int(digits, radix: 16)
     }
 
     /// `"45%"` → 45. Only 0...100 followed by `%`; anything else is `nil` (R5).
@@ -166,5 +209,30 @@ public enum HIDAccessoryParser {
         if p.contains("keyboard") { return .keyboard }
         if p.contains("trackpad") { return .trackpad }
         return .other
+    }
+}
+
+/// A device paired with this Mac, as `system_profiler SPBluetoothDataType` lists it.
+public struct PairedBluetoothDevice: Sendable, Equatable {
+    /// The normalised Bluetooth address (``AccessoryReading/key``).
+    public var key: String
+    public var name: String
+    public var kind: AccessoryKind
+    /// `device_vendorID` (Apple: 0x004C).
+    public var vendorID: Int?
+    /// `device_productID` (AirPods Pro 2 with USB-C: 0x2024).
+    public var productID: Int?
+    public var isHeadphones: Bool
+    public var isConnected: Bool
+
+    public init(key: String, name: String, kind: AccessoryKind, vendorID: Int?, productID: Int?,
+                isHeadphones: Bool, isConnected: Bool) {
+        self.key = key
+        self.name = name
+        self.kind = kind
+        self.vendorID = vendorID
+        self.productID = productID
+        self.isHeadphones = isHeadphones
+        self.isConnected = isConnected
     }
 }
