@@ -9,7 +9,8 @@ import os
 ///   the accessory poll, the agent's third timer (ADR-0014 rule 5): every 5 minutes while
 ///   any accessory is connected, otherwise every 15 minutes, with 60 s tolerance. The poll
 ///   is re-armed after every scan, so there is only ever one pending.
-///   - IOKit HID match/termination (R1) and Bluetooth disconnect: scan now.
+///   - IOKit HID match/termination (R1), Bluetooth disconnect and an accessory power-source
+///     change (AirPods level or charging, ADR-0015 amendment): scan now.
 ///   - Bluetooth connect (any device): the poll switches to 5 minutes at once, and scans
 ///     run 3 s and 15 s later, because AirPods publish their levels a few seconds after
 ///     connecting. A new connect replaces the pending delayed scans.
@@ -107,7 +108,7 @@ public actor AccessoryReporter {
             for await change in changes {
                 if Task.isCancelled { break }
                 switch change {
-                case .hid, .bluetoothDisconnected:
+                case .hid, .bluetoothDisconnected, .powerSources:
                     await self.report(reason: .batteryChange)
                 case .bluetoothConnected:
                     self.bluetoothConnected()

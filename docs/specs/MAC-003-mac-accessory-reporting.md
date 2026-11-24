@@ -16,8 +16,8 @@ iPhone's Batteries widget never shows a Magic Mouse or Keyboard, and it shows Ai
 
 ## Scope
 
-- In: Magic Mouse, Keyboard and Trackpad, and other Bluetooth HID devices that expose `BatteryPercent`; AirPods and Beats (left, right, case, or single battery) while connected to this Mac; connect and disconnect detection; stable UUIDv5 accessory IDs (ADR-0005); one `DeviceBattery` record per accessory component with `parentDeviceId` = this Mac.
-- Out: accessories connected to iPhone, iPad or Watch (no public API); charging state for AirPods (not exposed); non-Bluetooth USB devices; alerts (ALR).
+- In: Magic Mouse, Keyboard and Trackpad, and other Bluetooth HID devices that expose `BatteryPercent`; AirPods and Beats (left, right, case, or single battery) while connected to this Mac, and paired AirPods that macOS hears nearby (with charging, ADR-0015 2a); connect and disconnect detection; stable UUIDv5 accessory IDs (ADR-0005); one `DeviceBattery` record per accessory component with `parentDeviceId` = this Mac.
+- Out: accessories connected to iPhone, iPad or Watch (no public API); non-Bluetooth USB devices; alerts (ALR).
 
 ## Behaviour
 
@@ -57,7 +57,7 @@ What was built, and where it differs from the outline above:
 - **Group ID:** `accessoryGroupId = UUIDv5(LevelsAccessoryNamespace, "accessory-group:" + accessoryKey)` (`DeviceID.accessoryGroup(key:)`); one-way like the record names.
 - **R5:** a device whose battery keys can't be trusted (unknown `device_batteryLevel*` key, a value that is not `NN%`, a missing or malformed address, a non-integer `BatteryPercent`) is dropped whole; each distinct problem is logged once per run, with no address in the text.
 - **R6:** lead's call 16 turns the sandbox off for Debug and Release (ADR-0013 note), so `LEVELS_UNSANDBOXED` is set in both.
-- **Charging:** neither source exposes it; accessory records have `isCharging = false` and no `isPluggedIn`.
+- **Charging (ADR-0015 amendment 2a, 2026-11-24):** AirPods left, right and case get `isCharging` and `isPluggedIn` from macOS's accessory power sources (`pmset -g accps -xml`), which also give levels while the AirPods are nearby but not connected (for example charging in the case). Only the owner's paired AirPods have such a source; it is matched to the paired device by vendor and product ID, then name, or skipped. A level or charging change is picked up within about a minute and scanned at once. Magic peripherals and `system_profiler`-only devices keep `isCharging = false` and no `isPluggedIn`.
 
 ## Edge cases and failure modes
 
