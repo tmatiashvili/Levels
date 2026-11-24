@@ -30,6 +30,7 @@ Owner decisions and lead's calls, one row each, with the document that holds the
 | 2026-11-24 | R | Free tier on the iPhone also shows one paired Mac's own battery (not its accessories). Pro unlocks the Mac's accessories, any further devices, every widget beyond small, alerts and history. Refines O, because iOS can't read AirPods levels and an iPhone-only free tier would be empty. | [MON-001](specs/MON-001-levels-pro-entitlements.md) R14, R17, R19, R20; [MON-002](specs/MON-002-paywall-and-gating.md) R3 |
 | 2026-11-24 | S | StandBy is free: it shows the free small widget. No StandBy detection. Refines O. | [MON-001](specs/MON-001-levels-pro-entitlements.md) R14, R15 |
 | 2026-11-24 | T | The Mac app stays fully free and shows every device, including the iPhone. | [ADR-0021](adr/0021-levels-pro-subscription.md), lead's call 32 |
+| 2026-11-24 | U | Build push-driven widget updates now and pay the $99 Apple Developer Program fee later; nothing runs on devices until then. The Mac pushes widget reloads (and an optional "Follow charging" Live Activity) through a small relay that holds the APNs key, so the key never ships in the public Mac app. | [ADR-0023](adr/0023-push-updates.md), [PUSH-001](specs/PUSH-001-push-widget-updates.md) |
 
 ## Lead's calls
 
