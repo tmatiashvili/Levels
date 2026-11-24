@@ -383,12 +383,23 @@ public actor LocalOnlySyncService: BatterySyncing {
             guard trailingReloadTask == nil else { return }
             let sleep = timer(Self.duration(last.addingTimeInterval(Self.widgetReloadInterval).timeIntervalSince(t)))
             trailingReloadTask = Task {
-                try? await sleep()
+                do { try await sleep() } catch { return }  // cancelled: flushWidgetReload fired it
+                guard !Task.isCancelled else { return }
                 self.fireTrailingReload()
             }
         } else {
             fireReload(at: t)
         }
+    }
+
+    /// Fires a held trailing reload now, if there is one; else does nothing (no extra reload).
+    /// For the app going to the background, or the end of a background refresh: the process
+    /// is suspended soon after, and the trailing reload's timer would never fire, leaving the
+    /// widget on the older data until its own next reload.
+    public func flushWidgetReload() {
+        guard let task = trailingReloadTask else { return }
+        task.cancel()
+        fireTrailingReload()
     }
 
     private func fireTrailingReload() {

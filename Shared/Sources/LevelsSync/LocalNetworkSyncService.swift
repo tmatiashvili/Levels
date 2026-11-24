@@ -127,6 +127,9 @@ public actor LocalNetworkSyncService: BatterySyncing {
         return await cacheReadable()
     }
 
+    /// Fires a held widget reload now (``LocalOnlySyncService/flushWidgetReload()``).
+    public func flushWidgetReload() async { await local.flushWidgetReload() }
+
     // MARK: Lifecycle
 
     /// Launch: reads `lastFetchAt` from the cache and records the starting status

@@ -190,6 +190,27 @@ struct LocalOnlySyncServiceTests {
         #expect(cachedMac()?.updatedAt == beat.updatedAt)
     }
 
+    /// The app goes to the background (or a background refresh ends) with a trailing reload
+    /// held: it fires at once, because the suspended process would never fire it. With none
+    /// held, nothing extra is reloaded.
+    @Test func flushFiresAHeldReloadOnlyOnce() async {
+        let s = service()
+        _ = await s.report([mac(at: clock.date)], reason: .launch)
+        #expect(reloads.value == 1)
+        await s.flushWidgetReload()
+        #expect(reloads.value == 1)  // nothing held: no extra reload
+        advance(10)
+        _ = await s.report([mac(level: 79, at: clock.date)], reason: .wake)  // held for the 60 s window
+        #expect(reloads.value == 1)
+        await s.flushWidgetReload()
+        #expect(reloads.value == 2)
+        advance(120)
+        await settle()
+        #expect(reloads.value == 2)  // the cancelled timer does not fire it again
+        await s.flushWidgetReload()
+        #expect(reloads.value == 2)
+    }
+
     @Test func LOCAL_AC9a_widgetReloadsCoalescedTo60s() async {
         let s = service()
         _ = await s.report([mac(at: clock.date)], reason: .launch)
