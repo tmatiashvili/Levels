@@ -98,6 +98,17 @@ public enum DevicesTimeline {
         entryCount > 1 ? .atEnd : .after(now.addingTimeInterval(safetyReload))
     }
 
+    /// Mac widget: how often the timeline reloads to take a new live reading of this Mac
+    /// (96 a day at most; the app's own reloads come on top, ADR-0017 "every 15–60 minutes").
+    public static let liveOwnRefresh: TimeInterval = 15 * 60
+
+    /// With a live own reading (the Mac widget's variant A): `.after(now + 15 min)`, so this
+    /// Mac's level moves on even when the app is not running or its reloads are dropped. The
+    /// stale entries stay, so a late reload still shows other devices turning stale on time.
+    public static func livePolicy(now: Date) -> TimelineReloadPolicy {
+        .after(now.addingTimeInterval(liveOwnRefresh))
+    }
+
     /// Builds the entries for one snapshot.
     public static func entries(snapshot: SnapshotFile?, preferences: DisplayPreferences, now: Date,
                                selection: DeviceID? = nil) -> [DeviceEntry] {
@@ -178,12 +189,13 @@ public struct DevicesProvider: AppIntentTimelineProvider {
         return (snapshot, UserDefaultsDisplayPreferencesStore(suiteName: group).load())
     }
 
-    static func load(now: Date, selection: DeviceID? = nil) -> [DeviceEntry] {
+    /// `own`: the Mac widget's live reading of this Mac, laid over the cached own record.
+    static func load(now: Date, selection: DeviceID? = nil, own: OwnBatteryReading? = nil) -> [DeviceEntry] {
         let group = LevelsAppConfig.appGroupID
         if let demo = demoSnapshot(appGroupID: group, now: now) {  // DEMO-001 R10
             return DemoWidgetPlan.timeline(snapshot: demo, now: now, selection: selection).entries
         }
-        let snapshot = group.flatMap(SnapshotCache.init(appGroupID:))?.read()
+        let snapshot = group.flatMap(SnapshotCache.init(appGroupID:))?.read()?.overlaying(own: own)
         let prefs = UserDefaultsDisplayPreferencesStore(suiteName: group).load()
         return DevicesTimeline.entries(snapshot: snapshot, preferences: prefs, now: now, selection: selection)
     }
@@ -191,7 +203,9 @@ public struct DevicesProvider: AppIntentTimelineProvider {
     public func placeholder(in context: Context) -> DeviceEntry { Self.sample(now: .now) }
 
     public func snapshot(for configuration: SelectDeviceIntent, in context: Context) async -> DeviceEntry {
-        context.isPreview ? Self.sample(now: .now) : Self.load(now: .now, selection: configuration.device?.deviceID)[0]
+        if context.isPreview { return Self.sample(now: .now) }
+        let own = fetch == nil ? await readOwn?() : nil  // Mac widget: live own reading
+        return Self.load(now: .now, selection: configuration.device?.deviceID, own: own)[0]
     }
 
     public func timeline(for configuration: SelectDeviceIntent, in context: Context) async -> Timeline<DeviceEntry> {
@@ -201,12 +215,26 @@ public struct DevicesProvider: AppIntentTimelineProvider {
             return DemoWidgetPlan.timeline(snapshot: demo, now: now, selection: selection)
         }
         guard let fetch else {
-            let entries = Self.load(now: now, selection: selection)
-            return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
+            guard let readOwn else {
+                let entries = Self.load(now: now, selection: selection)
+                return Timeline(entries: entries, policy: DevicesTimeline.policy(entryCount: entries.count, now: now))
+            }
+            let (cached, prefs) = Self.cached()  // Mac widget: cache plus a live reading of this Mac
+            return Self.liveOwnTimeline(cached: cached, preferences: prefs, now: now, selection: selection,
+                                        own: await readOwn())
         }
         let (cached, prefs) = Self.cached()
         return await Self.hubTimeline(cached: cached, preferences: prefs, now: now, selection: selection, fetch: fetch,
                                       own: await readOwn?())
+    }
+
+    /// The Mac timeline: the cache with this Mac's live reading laid over its own record, the
+    /// stale entries, and a reload 15 min on to read the Mac again. Pure; unit-tested.
+    static func liveOwnTimeline(cached: SnapshotFile?, preferences prefs: DisplayPreferences, now: Date,
+                                selection: DeviceID?, own: OwnBatteryReading?) -> Timeline<DeviceEntry> {
+        let entries = DevicesTimeline.entries(snapshot: cached?.overlaying(own: own), preferences: prefs, now: now,
+                                              selection: selection)
+        return Timeline(entries: entries, policy: DevicesTimeline.livePolicy(now: now))
     }
 
     /// The iPhone timeline (variant B): the plan's snapshot with this iPhone's own live reading
@@ -252,10 +280,18 @@ public struct LevelsDevicesWidget: Widget {
     public static let families: [WidgetFamily] = [.systemSmall, .systemMedium]
     #endif
 
-    public init() {}
+    let readOwn: OwnBatteryReading.Read?
+
+    public init() { readOwn = nil }
+
+    /// - Parameter readOwn: the Mac widget's live read of this Mac's battery (Widgets-Mac).
+    public init(readOwn: OwnBatteryReading.Read?) {
+        self.readOwn = readOwn
+    }
 
     public var body: some WidgetConfiguration {
-        AppIntentConfiguration(kind: Self.kind, intent: SelectDeviceIntent.self, provider: DevicesProvider()) { entry in
+        AppIntentConfiguration(kind: Self.kind, intent: SelectDeviceIntent.self,
+                               provider: DevicesProvider(readOwn: readOwn)) { entry in
             DevicesWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)  // UI-003 R10
         }

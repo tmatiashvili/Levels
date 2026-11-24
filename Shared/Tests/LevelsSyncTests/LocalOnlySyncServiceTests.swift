@@ -195,8 +195,8 @@ struct LocalOnlySyncServiceTests {
         _ = await s.report([mac(at: clock.date)], reason: .launch)
         #expect(reloads.value == 1)
         advance(10)
-        _ = await s.report([mac(level: 79, at: clock.date)], reason: .wake)   // a shown change
-        _ = await s.report([mac(level: 78, at: clock.date)], reason: .sleep)  // inside the floor: held
+        _ = await s.report([mac(level: 70, at: clock.date)], reason: .wake)   // a shown change (10 points)
+        _ = await s.report([mac(level: 69, at: clock.date)], reason: .sleep)  // inside the floor: held
         #expect(reloads.value == 1)
         advance(49)
         await settle()
@@ -206,6 +206,111 @@ struct LocalOnlySyncServiceTests {
         advance(120)
         await settle()
         #expect(reloads.value == 2)                                     // exactly one trailing reload
+    }
+
+    // MARK: Widget budget: small level moves (2026-11-24)
+
+    /// The owner's log: a Mac charging at 1 % a minute requested a widget reload every minute.
+    /// Small level moves now share one reload per 5 min; anything else still reloads within 60 s.
+    @Test func LOCAL_R8a_chargingAtOnePercentAMinuteReloadsEvery5Minutes() async {
+        let s = service()
+        _ = await s.report([mac(level: 50, charging: true, pluggedIn: true, at: clock.date)], reason: .launch)
+        #expect(reloads.value == 1)
+        for minute in 1...10 {
+            advance(60)
+            _ = await s.report([mac(level: 50 + minute, charging: true, pluggedIn: true, at: clock.date)],
+                               reason: .batteryChange)
+            await settle()
+        }
+        // Without the rule: 10 reloads. 5 points reached at minute 5 (prompt), again at minute 10.
+        #expect(reloads.value == 3)
+        #expect(cachedMac()?.level == 60)
+    }
+
+    @Test func LOCAL_R8a_smallLevelMoveWaitsFor5MinutesThenOneTrailingReload() async {
+        let s = service()
+        _ = await s.report([mac(level: 80, at: clock.date)], reason: .launch)
+        advance(70)
+        _ = await s.report([mac(level: 79, at: clock.date)], reason: .batteryChange)
+        await settle()
+        #expect(cachedMac()?.level == 79)  // the cache is current at once; only the reload waits
+        #expect(reloads.value == 1)
+        advance(80)
+        _ = await s.report([mac(level: 78, at: clock.date)], reason: .batteryChange)
+        advance(140)  // 290 s after the first reload
+        await settle()
+        #expect(reloads.value == 1)
+        advance(10)   // 300 s
+        await waitFor { [reloads] in reloads.value == 2 }
+        advance(600)
+        await settle()
+        #expect(reloads.value == 2)  // exactly one
+    }
+
+    @Test func LOCAL_R8a_shownChangeMovesAWaitingLevelReloadEarlier() async {
+        let s = service()
+        _ = await s.report([mac(level: 80, at: clock.date)], reason: .launch)
+        advance(70)
+        _ = await s.report([mac(level: 79, at: clock.date)], reason: .batteryChange)  // waits for 300 s
+        advance(30)
+        _ = await s.report([mac(level: 79, charging: true, pluggedIn: true, at: clock.date)], reason: .chargerChange)
+        advance(3)  // debounce: the charger write, which is outside the 60 s window, reloads at once
+        await waitFor { [reloads] in reloads.value == 2 }
+        advance(400)
+        await settle()
+        #expect(reloads.value == 2)  // the 300 s trailing reload was covered and dropped
+    }
+
+    @Test func LOCAL_R8a_widgetChangeClassifiesWhatWidgetsShow() {
+        let t = clock.date
+        let shown = [mac(level: 60, at: t - 60)]
+        func change(_ after: DeviceBattery) -> LocalOnlySyncService.WidgetChange? {
+            LocalOnlySyncService.widgetChange(before: shown, after: [after], received: shown, now: t)
+        }
+        #expect(change(mac(level: 61, at: t)) == .levelOnly)
+        #expect(change(mac(level: 56, at: t)) == .levelOnly)
+        #expect(change(mac(level: 65, at: t)) == .shown)                    // 5 points
+        #expect(change(mac(level: nil, at: t)) == .shown)
+        #expect(change(mac(level: 60, charging: true, pluggedIn: true, at: t)) == .shown)
+        #expect(change(mac(level: 60, name: "Renamed", at: t)) == .shown)
+        #expect(change(mac(level: 60, at: t)) == nil)                       // only updatedAt, stale moment far
+        let low = [mac(level: 22, at: t - 60)]
+        #expect(LocalOnlySyncService.widgetChange(before: low, after: [mac(level: 20, at: t)], received: low, now: t)
+                == .shown)                                                  // crosses the low mark
+        #expect(LocalOnlySyncService.widgetChange(before: shown, after: shown + [airpod(level: 50, at: t)],
+                                                  received: shown, now: t) == .shown)
+        #expect(LocalOnlySyncService.widgetChange(before: shown, after: [mac(level: 61, at: t)], received: nil, now: t)
+                == .shown)                                                  // no reload yet in this process
+        #expect(LocalOnlySyncService.widgetChange(before: shown, after: shown, received: shown, now: t) == nil)
+    }
+
+    /// A charging Mac turns stale after 30 min, less than the 35 min lead: every write that
+    /// moved `updatedAt` counted as "stale moment near" and reloaded (once a minute while
+    /// charging). The lead is now at most half the threshold (15 min here).
+    @Test func LOCAL_R8a_chargingRecordStaleLeadIsHalfItsThreshold() {
+        let t = clock.date
+        func got(ago: TimeInterval) -> [DeviceBattery] { [mac(level: 60, charging: true, pluggedIn: true, at: t - ago)] }
+        let now = [mac(level: 60, charging: true, pluggedIn: true, at: t)]
+        #expect(LocalOnlySyncService.widgetChange(before: got(ago: 120), after: now, received: got(ago: 120), now: t) == nil)
+        #expect(LocalOnlySyncService.widgetChange(before: got(ago: 16 * 60), after: now, received: got(ago: 16 * 60),
+                                                  now: t) == .shown)
+    }
+
+    /// Readings never go backwards: a held or late reading older than what the cache holds
+    /// (for example from a second copy of the app) leaves the newer record in place.
+    @Test func LOCAL_newestReadingWinsInTheCache() async throws {
+        let s = service()
+        let newer = mac(level: 57, at: clock.date)
+        try cache.update { file in
+            file.ownDeviceID = macID
+            file.devices = [newer]
+        }
+        _ = await s.report([mac(level: 55, at: clock.date - 60)], reason: .launch)
+        #expect(cachedMac() == newer)
+        advance(70)
+        let later = mac(level: 58, at: clock.date)
+        _ = await s.report([later], reason: .userRefresh)
+        #expect(cachedMac() == later)
     }
 
     /// Lead's call 17: a heartbeat that only moves `updatedAt` reloads only once the stale
