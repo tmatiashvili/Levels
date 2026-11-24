@@ -94,14 +94,15 @@ import os
         // The Mac's last address in the App Group: the app and the widget dial it before Bonjour.
         let transport = NWHubTransport(memory: UserDefaultsHubEndpointMemory(suiteName: group))
         #if LEVELS_PUSH
-        // Push (ADR-0023): the widget's token goes to the Mac on each connect and on change.
-        let pushTokens: (@Sendable () async -> [PushToken])? = { await PushTokenSource.current(appGroupID: group) }
+        // Push (ADR-0023, PUSH-001 R72): the widget's token and a relay grant for the Mac's key go
+        // to the Mac on each connect, on change and when the Mac asks for a new grant.
+        let push = PushRegistrationFactory.make(appGroupID: group)  // nil without a relay URL
         #else
-        let pushTokens: (@Sendable () async -> [PushToken])? = nil  // free team: no aps-environment
+        let push: (any PushRegistrationSource)? = nil  // free team: no aps-environment, no App Attest
         #endif
         let hub = LocalNetworkSyncService(local: local, outbox: outbox, transport: transport,
                                           pairing: pairingStore, identity: identity, cache: cache, etagSuite: group,
-                                          onChange: { relay.fire() }, pushTokens: pushTokens)
+                                          onChange: { relay.fire() }, push: push)
         // DEMO-001 R6: while demo mode is on, reports and refreshes go to DemoSyncService instead.
         let sync = LoggingSync(base: DemoAwareSync(real: hub, mode: demoMode), cacheURL: cache.fileURL,
                                onReport: { relay.fire() })

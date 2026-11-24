@@ -49,16 +49,22 @@ public actor LocalNetworkSyncService: BatterySyncing {
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
     private let onChange: @Sendable () -> Void
-    /// Push (ADR-0023): this iPhone's push tokens. `nil` = push off (`LEVELS_PUSH_ENABLED = NO`):
-    /// `PUT /v1/push-tokens` is never sent.
-    private let pushTokens: (@Sendable () async -> [PushToken])?
+    /// Push (ADR-0023, PUSH-001 R72): this iPhone's tokens and relay grants. `nil` = push off
+    /// (`LEVELS_PUSH_ENABLED = NO`): `GET /v1/push-key` and `PUT /v1/push-tokens` are never sent.
+    private let push: (any PushRegistrationSource)?
 
     private var client: HubClient?
-    /// The token set the Mac acknowledged on this connection; `nil` = not sent since the last
-    /// (re)connect, so the next good contact sends it.
-    private var pushTokensSent: [PushToken]?
-    /// The Mac answered 404/405 (older build): stop asking until the next pairing.
+    /// The tokens (and the Mac key their grant names) the Mac acknowledged on this connection;
+    /// `nil` = not sent since the last (re)connect, so the next good contact sends them.
+    private var pushRegistered: (tokens: [PushToken], macKey: String)?
+    /// Last `GET /v1/push-key`; asked again after ``pushKeyCheckInterval`` (R16, R72).
+    private var pushKeyCheckedAt: Date?
+    /// The Mac refused our grant (400): the next one must be new, not cached.
+    private var pushForceNewGrant = false
+    /// The Mac answered 404/405 (older build or push off): stop asking until the next pairing.
     private var pushRouteMissing = false
+    /// How often a connected iPhone asks the Mac whether it needs a new grant.
+    static let pushKeyCheckInterval: TimeInterval = 15 * 60
     private var etag: String?
     private var lastFetchAt: Date?
     private var currentStatus: SyncStatus = .localOnly
@@ -76,8 +82,8 @@ public actor LocalNetworkSyncService: BatterySyncing {
                                     cache: SnapshotCache, etagSuite: String? = nil, persistsETag: Bool = true,
                                     now: @escaping @Sendable () -> Date = Date.init, clock: C = ContinuousClock(),
                                     onChange: @escaping @Sendable () -> Void = {},
-                                    pushTokens: (@Sendable () async -> [PushToken])? = nil) {
-        self.pushTokens = pushTokens
+                                    push: (any PushRegistrationSource)? = nil) {
+        self.push = push
         self.local = local
         self.outbox = outbox
         self.transport = transport
@@ -175,7 +181,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         liveGeneration += 1
         task.cancel()
         if let nw = transport as? NWHubTransport { await nw.reset() }
-        pushTokensSent = nil  // a new connection resends them
+        resetPushState()  // a new connection resends them
         Self.logger.notice("Live updates stopped")
     }
 
@@ -196,7 +202,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         await stopLiveUpdates()
         if let nw = transport as? NWHubTransport { await nw.reset() }
         setETag(nil)
-        pushTokensSent = nil
+        resetPushState()
         pushRouteMissing = false
         await refresh(.userPull)
     }
@@ -214,7 +220,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
         }
         outbox.clear()
         setETag(nil)
-        pushTokensSent = nil
+        resetPushState()
         await setStatus(.notPaired)
     }
 
@@ -279,20 +285,62 @@ public actor LocalNetworkSyncService: BatterySyncing {
         }
     }
 
-    /// Push: sends this iPhone's tokens after a good contact when they changed or were not
-    /// sent since the last connect. A failure is retried at the next contact.
+    private func resetPushState() {
+        pushRegistered = nil
+        pushKeyCheckedAt = nil
+    }
+
+    /// Push (R72): after a good contact, when the tokens changed, on each new connection, and
+    /// every ``pushKeyCheckInterval``: asks the Mac for its key and grant state, gets a grant
+    /// for this iPhone's tokens from the relay when needed (cached otherwise), and sends both
+    /// to the Mac. A failure is retried at a later contact.
     private func syncPushTokens() async {
-        guard let pushTokens, !pushRouteMissing, let client = clientIfReady() else { return }
-        let current = await pushTokens()
-        guard current != pushTokensSent, !(pushTokensSent == nil && current.isEmpty) else { return }
+        guard let push, !pushRouteMissing, let client = clientIfReady() else { return }
+        let t = now()
+        let tokens = await push.tokens()
+        let changed = pushRegistered.map { $0.tokens != tokens } ?? true
+        let due = pushKeyCheckedAt.map { t.timeIntervalSince($0) >= Self.pushKeyCheckInterval } ?? true
+        guard changed || due else { return }
+        if pushRegistered == nil, tokens.isEmpty {  // nothing to tell the Mac yet
+            pushKeyCheckedAt = t
+            return
+        }
+        let answer: PushKeyAnswer
         do {
-            if try await client.putPushTokens(current) {
-                Self.logger.notice("Push tokens sent to the Mac (\(current.count, privacy: .public))")
+            guard let a = try await client.pushKey() else {
+                pushRouteMissing = true
+                Self.logger.notice("The Mac doesn't take push grants (older build or push off)")
+                return
+            }
+            answer = a
+        } catch {
+            Self.logger.notice("Push key not read: \(String(describing: error), privacy: .public)")
+            return
+        }
+        pushKeyCheckedAt = t
+        let upload: PushTokenUpload
+        if tokens.isEmpty {
+            upload = PushTokenUpload(tokens: [])  // no widget left: the Mac stops pushing
+        } else {
+            guard changed || answer.macKey != pushRegistered?.macKey || answer.grant != .ok else { return }
+            guard let grant = await push.grant(for: tokens, macKey: answer.macKey,
+                                               forceNew: answer.grant == .renew || pushForceNewGrant)
+            else { return }  // no App Attest, relay down: try again later
+            upload = PushTokenUpload(tokens: tokens, grant: grant.grant, grantExpiresAt: grant.expiresAt)
+        }
+        do {
+            if try await client.putPushTokens(upload) {
+                pushRegistered = (tokens, answer.macKey)
+                pushForceNewGrant = false
+                Self.logger.notice("Push tokens sent to the Mac (\(tokens.count, privacy: .public))")
             } else {
                 pushRouteMissing = true
                 Self.logger.notice("The Mac doesn't take push tokens (older build)")
             }
-            pushTokensSent = current
+        } catch .badResponse(400) {
+            pushForceNewGrant = true  // the grant doesn't match this Mac: get a new one next time
+            pushKeyCheckedAt = nil
+            Self.logger.notice("The Mac refused the push grant; a new one follows")
         } catch {
             Self.logger.notice("Push tokens not sent: \(String(describing: error), privacy: .public)")
         }
@@ -316,7 +364,7 @@ public actor LocalNetworkSyncService: BatterySyncing {
 
     /// R9 table.
     private func apply(_ error: HubError) async {
-        if Self.isUnreachable(error) { pushTokensSent = nil }  // resend after the next connect
+        if Self.isUnreachable(error) { resetPushState() }  // resend after the next connect
         let status: SyncStatus
         switch error {
         case .notPaired: status = .notPaired

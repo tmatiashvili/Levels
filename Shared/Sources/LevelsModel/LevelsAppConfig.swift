@@ -10,7 +10,8 @@ public enum LevelsAppConfig {
     /// `<rdns>.levels.device-identity` (ADR-0007).
     public static let keychainServiceKey = "LevelsKeychainService"
 
-    /// The push relay's base URL (Mac, ADR-0023): `LEVELS_PUSH_RELAY_URL`. Empty = push off.
+    /// The push relay's base URL (ADR-0023): `LEVELS_PUSH_RELAY_URL`. The Mac pushes through it;
+    /// the iPhone app gets its App Attest credential and grants from it. Empty = push off.
     public static let pushRelayURLKey = "LevelsPushRelayURL"
 
     public static var appGroupID: String? { value(appGroupKey) }

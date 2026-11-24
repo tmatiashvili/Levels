@@ -60,35 +60,76 @@ public struct PushToken: Codable, Sendable, Equatable, Hashable {
         self.init(token: data.map { String(format: "%02x", $0) }.joined(), env: env, kind: kind)
     }
 
-    /// Longest accepted token, in hex characters. APNs tokens are 32 bytes today; Apple says
-    /// not to rely on that, so allow growth.
-    public static let maxHexLength = 400
+    /// Shortest and longest accepted token, in hex characters: the relay's bounds (PUSH-001
+    /// R10). APNs tokens are 32 bytes today; Apple says not to rely on that, so allow growth.
+    public static let minHexLength = 32
+    public static let maxHexLength = 512
 
-    /// Even-length lowercase hex, 16…``maxHexLength`` characters.
+    /// Even-length lowercase hex, ``minHexLength``…``maxHexLength`` characters.
     public var isValid: Bool {
-        (16...Self.maxHexLength).contains(token.count) && token.count.isMultiple(of: 2)
+        (Self.minHexLength...Self.maxHexLength).contains(token.count) && token.count.isMultiple(of: 2)
             && token.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 }
 
 /// `PUT /v1/push-tokens` body: the device's full token set (replaces what the Mac holds).
 /// An empty list clears it.
+///
+/// - v1 (first push client): `{"v":1,"tokens":[…]}`. Still accepted; the Mac stores the tokens
+///   but can't push without a grant.
+/// - v2: adds the relay grant for those tokens and this Mac's key (PUSH-001 R72):
+///   `{"v":2,"tokens":[…],"grant":"g1.…","grantExpiresAt":<unix s>}`. Sent only to a Mac that
+///   answers `GET /v1/push-key` (an older Mac answers 404 and is never sent v2).
 public struct PushTokenUpload: Codable, Sendable, Equatable {
     public var v: Int
     public var tokens: [PushToken]
+    public var grant: String?
+    /// Unix seconds.
+    public var grantExpiresAt: Int64?
 
-    public init(v: Int = HubProtocol.pushTokensVersion, tokens: [PushToken]) {
+    public init(v: Int = HubProtocol.pushTokensVersion, tokens: [PushToken], grant: String? = nil, grantExpiresAt: Int64? = nil) {
         self.v = v
         self.tokens = tokens
+        self.grant = grant
+        self.grantExpiresAt = grantExpiresAt
+    }
+}
+
+/// `GET /v1/push-key` answer: this Mac's push public key (PUSH-001 R18 format) and whether it
+/// needs a new grant from the caller.
+public struct PushKeyAnswer: Codable, Sendable, Equatable {
+    public enum GrantState: String, Codable, Sendable {
+        /// The Mac holds a grant that covers the caller's tokens and isn't close to expiry.
+        case ok
+        /// The Mac holds no grant for the caller (fresh pairing, v1 upload, Mac data reset).
+        case none
+        /// The Mac's grant was refused by the relay, names an old key, doesn't cover the tokens,
+        /// or expires within 7 days: get a new one, not a cached one (R16, R19, R72).
+        case renew
+    }
+    public var v: Int
+    public var macKey: String
+    public var grant: GrantState
+
+    public init(v: Int = HubProtocol.pushKeyVersion, macKey: String, grant: GrantState) {
+        self.v = v
+        self.macKey = macKey
+        self.grant = grant
     }
 }
 
 extension HubProtocol {
-    /// Version of the `PUT /v1/push-tokens` body. The route is additive: the snapshot
-    /// protocol stays at ``version``; an older Mac answers 404 and the iPhone stops asking.
-    public static let pushTokensVersion = 1
+    /// Version of the `PUT /v1/push-tokens` body the iPhone sends. The Mac accepts 1 and 2.
+    /// The routes are additive: the snapshot protocol stays at ``version``.
+    public static let pushTokensVersion = 2
+    public static let acceptedPushTokensVersions: Set<Int> = [1, 2]
+    /// Version of the `GET /v1/push-key` answer.
+    public static let pushKeyVersion = 1
     /// At most this many tokens per paired device (a widget token, a Live Activity token, spares).
+    /// Also the relay's limit per grant.
     public static let maxPushTokensPerDevice = 4
+    /// A grant with less than this left counts as expiring (R72).
+    public static let pushGrantRenewBefore: TimeInterval = 7 * 24 * 3600
 }
 
 // MARK: - Widget token in the App Group

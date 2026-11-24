@@ -54,6 +54,9 @@ public enum HubProtocol {
         public static let pairConfirm = "/v1/pair/confirm"
         /// `PUT`: the device's WidgetKit / ActivityKit push tokens (``PushTokenUpload``).
         public static let pushTokens = "/v1/push-tokens"
+        /// `GET`: the Mac's push public key and grant state for the caller (``PushKeyAnswer``).
+        /// 404 when the Mac has push off or is older.
+        public static let pushKey = "/v1/push-key"
     }
 
     /// `Levels-<tag>`: the Bonjour instance name for a hub tag (NET-001 R2).

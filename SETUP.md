@@ -161,12 +161,19 @@ A new Team ID changes `$(TeamIdentifierPrefix)`, so the App Group and keychain g
 
 ### Widget push (after paying)
 
-The push-driven iPhone widget (ADR-0023, PUSH-001) is built but off. `LEVELS_PUSH_ENABLED = NO` in `Config/Levels.xcconfig` keeps the free-team build as it was: the old entitlements files, no push handler, no token upload, no relay calls. To turn it on:
+The push-driven iPhone widget (ADR-0023, PUSH-001) is built but off. `LEVELS_PUSH_ENABLED = NO` in `Config/Levels.xcconfig` keeps the free-team build as it was: the old entitlements files, no push handler, no App Attest, no token upload, no push key, no relay calls. To turn it on:
 
-1. Change `DEVELOPMENT_TEAM` to the paid Team ID.
-2. Set `LEVELS_PUSH_ENABLED = YES`. The iPhone app and widget then sign with `Config/Levels-iOS-Push.entitlements` and `Config/Widgets-iOS-Push.entitlements` (`aps-environment` = `development`; a TestFlight or App Store export rewrites it to `production`). Both targets need it: WidgetKit push asks for the capability on the app and the extension.
-3. Set `LEVELS_PUSH_RELAY_URL` to the relay's base URL, written as `https:/$()/<host>` (xcconfig reads `//` as a comment). Empty keeps the Mac from calling the relay.
-4. Put the relay's auth into a `PushRelayAuth` (`Shared/Sources/LevelsNet/PushRelay.swift`) and pass it where `Levels-Mac/MacAppModel.swift` builds the `PushRelayClient`. The placeholder sends no auth, so the relay answers 401.
+1. Change `DEVELOPMENT_TEAM` to the paid Team ID. In the developer account, enable Push Notifications and App Attest on the iOS App ID (PUSH-001 R80).
+2. Deploy the relay (`relay/`, PUSH-001 R81) and note its URL.
+3. Set `LEVELS_PUSH_ENABLED = YES`. The iPhone app and widget then sign with `Config/Levels-iOS-Push.entitlements` and `Config/Widgets-iOS-Push.entitlements` (`aps-environment` = `development`; a TestFlight or App Store export rewrites it to `production`). Both need `aps-environment`: WidgetKit push asks for the capability on the app and the extension. Only the app's file has `com.apple.developer.devicecheck.appattest-environment` (`development`): the widget extension can't use App Attest. Apple's docs say TestFlight and App Store builds always use the production App Attest environment; check that on the first TestFlight build.
+4. Set `LEVELS_PUSH_RELAY_URL` to the relay's base URL, written as `https:/$()/<host>` (xcconfig reads `//` as a comment). Both apps read it (Info.plist `LevelsPushRelayURL`). Empty keeps both from calling the relay: the Mac then answers 404 on `GET /v1/push-key`, so the iPhone never asks for a grant.
+
+How the pieces connect (nothing to configure):
+
+- The Mac makes a P-256 push key on first use, in the Keychain (`<rdns>.levels.push-key`). "Remove all pairings" replaces it.
+- The iPhone app reads the Mac's public key over the paired hub (`GET /v1/push-key`), attests itself once with App Attest, asks the relay for a grant naming that key and its widget token, and sends tokens and grant to the Mac (`PUT /v1/push-tokens`, body v2). Its App Attest key ID, credential and last grant are in its Keychain (`<rdns>.levels.push`). The simulator has no App Attest, so push stays off there.
+- The Mac signs each push (`Levels-Grant`, `Levels-Timestamp`, `Levels-Signature`). At most one push per iPhone per 15 minutes and 48 per day; plug-in, unplug and crossing the alert threshold go out at once but still count. No push while that iPhone's app is open.
+- An older Mac answers 404 on `GET /v1/push-key`, so a newer iPhone sends it nothing. An older iPhone's v1 upload (tokens only) is stored, but without a grant nothing is pushed.
 
 The Mac itself needs no push entitlement. WidgetKit push needs no `remote-notification` background mode.
 

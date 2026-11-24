@@ -249,7 +249,7 @@ final class RevokingStore: HubPairingStore {
     func remove(_ id: DeviceID) throws { try inner.remove(id) }
     func removeAll() throws { try inner.removeAll() }
     func touch(_ id: DeviceID, at: Date) { inner.touch(id, at: at) }
-    func setPushTokens(_ tokens: [PushToken], for id: DeviceID) throws -> Bool { try inner.setPushTokens(tokens, for: id) }
+    func updatePush(for id: DeviceID, _ change: (inout PairedClient) -> Void) throws -> Bool { try inner.updatePush(for: id, change) }
 }
 
 extension TLSLoopbackTests {

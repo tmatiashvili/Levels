@@ -181,14 +181,28 @@ public actor HubClient {
     /// `PUT /v1/push-tokens` with this device's full token set. `false` when the Mac doesn't
     /// know the route (404/405: an older Mac); other errors throw.
     @discardableResult
-    public func putPushTokens(_ tokens: [PushToken]) async throws(HubError) -> Bool {
-        guard let body = try? HubWire.encoder().encode(PushTokenUpload(tokens: tokens)) else { throw .badResponse(0) }
+    public func putPushTokens(_ upload: PushTokenUpload) async throws(HubError) -> Bool {
+        guard let body = try? HubWire.encoder().encode(upload) else { throw .badResponse(0) }
         let request = HTTPRequest(method: "PUT", path: HubProtocol.Path.pushTokens,
                                   headers: ["content-type": "application/json"], body: body)
         let response = try await send(request, timeout: Self.answerMargin)
         switch response.status {
         case 204: return true
         case 404, 405: return false
+        default: throw .badResponse(response.status)
+        }
+    }
+
+    /// `GET /v1/push-key`. `nil` when the Mac has push off or is older (404/405).
+    public func pushKey() async throws(HubError) -> PushKeyAnswer? {
+        let response = try await send(HTTPRequest(method: "GET", path: HubProtocol.Path.pushKey), timeout: Self.answerMargin)
+        switch response.status {
+        case 200:
+            guard let answer = try? HubWire.decoder().decode(PushKeyAnswer.self, from: response.body),
+                  answer.v == HubProtocol.pushKeyVersion
+            else { throw .badResponse(200) }
+            return answer
+        case 404, 405: return nil
         default: throw .badResponse(response.status)
         }
     }

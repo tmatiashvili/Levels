@@ -1,0 +1,30 @@
+{
+  "comment": "PUSH-001 R17, R18, R33 shared vectors. Asserted by relay/test/vectors.test.ts and Shared/Tests/LevelsNetTests/PushAuthVectorTests.swift. Change only together with both implementations.",
+  "macPrivateKeyRawHex": "c7cbb7e120f36f0e64c80a0102a1e860f1c15b208e90e98a2bd2383eb3764372",
+  "macPublicKey": "BJdHW215_esZtak1a3EGsekGWFoaqm1NIpz3HjFd_FlqA2Y-C_yCVA8SXBuApkhkepz_rM2T68zFjZqUMm9T_A4",
+  "timestamp": "1800000000",
+  "method": "POST",
+  "path": "/v1/widget-push",
+  "token": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+  "body": "{\"payload\":{\"aps\":{\"content-changed\":true}},\"tokens\":[{\"env\":\"production\",\"kind\":\"widget\",\"token\":\"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\"}]}",
+  "bodySha256": "3507bc974dc708ed035953ac52ce6b201b9ee56e32ae62c8ebe2d75750e5ad3b",
+  "signingString": "levels-push-v1\n1800000000\nPOST\n/v1/widget-push\n3507bc974dc708ed035953ac52ce6b201b9ee56e32ae62c8ebe2d75750e5ad3b",
+  "signatures": {
+    "node": "vARht_I5ofMLOQab1xlPCV6yPtoIkSD6B5WCftyb-MlA7EqQtj-POJeDE66DyA7jaP-4LrcWUorDw2X50A5BfQ",
+    "swift": "-p7OCzCfU2vx4GOyBzuwfYSu9d4-rQm9DYYJvNb8D53q6Oq308WM5_RPEROiyxm-w0Rr-QRajlAtJcEeu3l3XQ"
+  },
+  "tokenHashes": [
+    {
+      "token": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "hash": "msJdMAMCxZrY_OzVIpnLKw"
+    },
+    {
+      "token": "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF",
+      "hash": "msJdMAMCxZrY_OzVIpnLKw"
+    },
+    {
+      "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "hash": "1opZcai49MnXT58eV0mKrw"
+    }
+  ]
+}

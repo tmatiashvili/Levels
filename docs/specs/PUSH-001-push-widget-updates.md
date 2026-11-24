@@ -23,7 +23,7 @@ The iPhone widget can only refresh every 15–60 minutes on its own, so it shows
 
 ### Relay: general
 
-- **R1** The relay accepts only `POST` with `content-type: application/json` and a body of at most 8 KB. Other methods get 405, a wrong content type or a larger body 400, an unknown path 404.
+- **R1** The relay accepts only `POST` with `content-type: application/json`, a `Content-Length` header and a body of at most 8 KB. Other methods get 405, a wrong content type or a larger body 400, a missing or malformed `Content-Length` 411 `length_required`, an unknown path 404. The body is read as a stream and the read stops (and the stream is cancelled) as soon as it passes 8 KB, whatever `Content-Length` said.
 - **R2** Every response has `content-type: application/json` and `cache-control: no-store`. Errors are `{"error":"<code>"}`.
 - **R3** The relay never logs a request, token, grant or payload, and never stores a raw token. Workers observability stays off (`wrangler.toml`).
 - **R4** The relay only sends APNs push types `widgets` and `liveactivity`, with topics `<IOS_BUNDLE_ID>.push-type.widgets` and `<IOS_BUNDLE_ID>.push-type.liveactivity`. It never sends an `alert`, never `event: start`.
@@ -82,15 +82,15 @@ The iPhone widget can only refresh every 15–60 minutes on its own, so it shows
   <lowercase hex SHA-256 of the exact body bytes sent>
   ```
 
-- **R18** The Mac's push key is a P-256 signing key made on first use and kept in the Mac's Keychain (Secure Enclave `SecureEnclave.P256.Signing.PrivateKey` when available, else a software `P256.Signing.PrivateKey`; **Builder's call** which). Its public key travels as base64url (no padding) of `x963Representation` (65 bytes, `0x04‖X‖Y`). "Remove all pairings" makes a new key.
-- **R19** 401 codes: `auth_missing`, `timestamp_invalid`, `timestamp_skew`, `grant_count`, `grant_invalid`, `grant_expired`, `grant_mac_mismatch`, `signature_invalid`, `token_not_granted`. On `grant_expired` or `token_not_granted` the Mac asks the iPhone for a fresh grant (R72); on `timestamp_skew` it logs locally and retries once at the next change; on the others it stops pushing to that iPhone until a new grant arrives.
+- **R18** The Mac's push key is a P-256 signing key made on first use and kept in the Mac's Keychain (Builder's call, taken: a software `P256.Signing.PrivateKey`, service `<rdns>.levels.push-key`; it is made only when a relay URL is set). Its public key travels as base64url (no padding) of `x963Representation` (65 bytes, `0x04‖X‖Y`). "Remove all pairings" makes a new key.
+- **R19** 401 codes: `auth_missing`, `timestamp_invalid`, `timestamp_skew`, `grant_count`, `grant_invalid`, `grant_expired`, `grant_mac_mismatch`, `signature_invalid`, `token_not_granted`. On `timestamp_skew` the Mac logs locally and tries again at the next change. On every other code it stops pushing to that iPhone and asks it for a fresh grant (R72: `GET /v1/push-key` answers `renew`) until a new grant arrives. The Mac sends one request per iPhone, so a 401 names one iPhone.
 
 Swift shape (**Builder's call** beyond this):
 
 ```swift
 public protocol PushRelayAuth: Sendable {
-    /// Returns the three Levels-* headers for this exact body.
-    func headers(for body: Data, path: String, at date: Date) throws -> [String: String]
+    /// Returns the three Levels-* headers for this exact body, carrying `grants`.
+    func headers(for body: Data, path: String, at date: Date, grants: [String]) throws -> [String: String]
 }
 ```
 
@@ -100,6 +100,7 @@ public protocol PushRelayAuth: Sendable {
 - **R31** `POST /v1/attest`, body `{"keyId":"<base64 from generateKey>","attestation":"<base64 attestation object>","challenge":"<challenge>"}`. The app calls `attestKey(keyId, clientDataHash: SHA256(UTF-8 challenge string))`. → `200 {"credential":"c1.…","env":"production"|"development","expiresAt":<unix>}`. The credential lasts 1 year; the app keeps it with the key ID in its Keychain.
 - **R32** The relay checks the attestation as Apple's server guide says: chain to the Apple App Attestation Root CA, nonce extension `1.2.840.113635.100.8.2`, SHA-256 of the key equals `keyId`, RP ID = SHA-256 of `<APPLE_TEAM_ID>.<IOS_BUNDLE_ID>`, counter 0, `aaguid` (`appattestdevelop` → `development`, `appattest`+7×0x00 → `production`), credential ID = key ID, and `apple_validation_category_01` ∈ {2 TestFlight, 3 development, 4 App Store} when present.
 - **R33** Token hash, computed the same on the iPhone and the relay: base64url (no padding) of the first 16 bytes of SHA-256 of the UTF-8 string `"levels-token-v1:" + <lowercase hex token>`. 22 characters.
+- **R33a** The App Attest key ID must decode (standard or URL-safe base64) to 32 bytes, else 400 `key_id_invalid`. The credential stores its canonical standard-base64 spelling, and the device ID behind every rate-limit bucket is derived from the decoded bytes, so other spellings of one key share one identity.
 - **R34** `POST /v1/grant`, body `{"credential":"c1.…","clientData":"<base64 of the exact JSON bytes>","assertion":"<base64 assertion>"}`. `clientData` JSON: `{"challenge":"<fresh challenge>","macKey":"<Mac public key, R18 format>","tokens":[{"kind":"widget"|"liveActivity","hash":"<R33>"}]}` (1–4 tokens). The app calls `generateAssertion(keyId, clientDataHash: SHA256(clientData bytes))`. → `200 {"grant":"g1.…","env":"…","expiresAt":<unix>}`, valid 30 days. The grant's environment is the credential's.
 - **R35** Errors on iPhone routes: 400 for missing or malformed fields; 401 `challenge_invalid`, `challenge_expired`, `credential_invalid`, `credential_expired`, `attest_<reason>`; 429 with `Retry-After`.
 - **R36** A Debug build (App Attest development, APNs development) gets development grants and can only push to sandbox tokens. TestFlight and App Store builds get production grants.
@@ -117,8 +118,8 @@ public protocol PushRelayAuth: Sendable {
 - **R50** The Mac pushes `widget` tokens only when what a widget shows changes (lead's call 17 list: device set, level, charging, plugged in, Low Power Mode, names, hidden set) for a device other than that iPhone itself.
 - **R51** At most one widget push per iPhone per 15 minutes, coalescing changes inside the gap into one push at its end.
 - **R52** Exceptions that skip R51 but still count toward R53: a shown device is plugged in or unplugged, or crosses its low-battery threshold (ALR-001).
-- **R53** At most 48 widget pushes per iPhone per day (local midnight to midnight). After that, none until the next day.
-- **R54** No widget push while that iPhone is talking to the Mac with the app in the foreground (its long-poll is open, ADR-0020 Decision 5): the app reloads its widgets itself, unbudgeted.
+- **R53** At most 48 widget pushes per iPhone per day (local midnight to midnight). After that, none until the next day. The count is kept in memory: a Mac relaunch starts it again (the relay's 100 per 24 h per token still holds).
+- **R54** No widget push while that iPhone is talking to the Mac with the app in the foreground (its long-poll is open, ADR-0020 Decision 5): the app reloads its widgets itself, unbudgeted. A long-poll that ended less than 10 s ago still counts (the next one follows at once). Changes in that time are treated as delivered, not saved for later.
 - **R55** A Live Activity token gets an update on every change of its device's level (whole percent) or charging state, priority 5, at most one per 60 s; priority 10 only for "full", "unplugged" and the final `end`. `stale-date` = now + 30 min on every update.
 - **R56** Pushing is on only when the paid build has a relay URL configured and the iPhone sent a grant; otherwise nothing is sent and nothing changes for the user.
 
@@ -126,7 +127,10 @@ public protocol PushRelayAuth: Sendable {
 
 - **R70** Each push-enabled widget configuration adds `.pushHandler(LevelsWidgetPushHandler.self)`. The handler writes the token (hex) and its environment to the App Group; it makes no network calls (App Attest doesn't work in widget extensions). The app also reads `WidgetCenter.shared.currentPushInfo` on launch in case the handler was missed.
 - **R71** The app does App Attest once per install (R30–R31). If `isSupported` is false (simulator), push stays off.
-- **R72** When its widget token, a Live Activity token, the Mac key, or a grant within 7 days of expiry changes, and the app runs (foreground or background refresh), it gets a grant (R34) and sends `PUT /v1/push-registration` to the Mac over the hub: `{"tokens":[{"token":"<hex>","env":"…","kind":"…"}],"grant":"g1.…","expiresAt":<unix>}`. The Mac answers its public push key on `GET /v1/push-key` → `{"macKey":"<R18>"}`. Both are new NET-001 routes, authenticated like the others.
+- **R72** Hub routes (NET-001, authenticated like the others: the TLS identity and `Levels-Device` must agree, the device must be paired):
+  - `GET /v1/push-key` → `200 {"v":1,"macKey":"<R18>","grant":"ok"|"none"|"renew"}`. `none`: the Mac holds no grant for the caller. `renew`: its grant was refused by the relay (R16, R19), names another Mac key, doesn't cover the stored tokens, or expires within 7 days; the iPhone must get a new grant, not a cached one. 404 when the Mac has push off (no relay URL) or is older.
+  - `PUT /v1/push-tokens`, body v2: `{"v":2,"tokens":[{"token":"<hex>","env":"…","kind":"…"}],"grant":"g1.…","grantExpiresAt":<unix>}` → 204. The Mac reads the grant without its MAC and answers 400 when it doesn't name this Mac's key or doesn't cover every token (same kind and env). `grant` and `grantExpiresAt` come together or not at all. An empty `tokens` list clears the device's push state. v1 (`{"v":1,"tokens":[…]}`, the first client) is still accepted and stored, but without a grant nothing is pushed (R56).
+  - The iPhone reads `GET /v1/push-key` on each new connection, when its tokens change and every 15 minutes while connected. It sends tokens and grant on each new connection and whenever its tokens or the Mac key change or the Mac says `none` or `renew`. A grant is reused from the app's Keychain while it has more than 7 days left, names the same Mac key and covers the same tokens. A newer iPhone sends nothing to a Mac that answers 404.
 - **R73** The widget's timeline provider, on each reload, fetches from the Mac (NET-004 variant B) unless the App Group cache is under 60 s old. It can't tell a push-triggered reload from another (Apple gives no signal), so this applies to every reload.
 - **R74** "Follow charging": a button on a device row (Mac or accessory, charging or below its threshold) starts a Live Activity with `pushType: .token`. Static attributes hold the device name and kind; `ContentState` holds only `level` (Int, 0–100), `isCharging` (Bool), `updatedAt` (Unix seconds); default JSON coding (Apple requires it). Its token goes to the Mac per R72. It ends at 100 %, at unplug (Mac sends `end`), or after 8 hours. One at a time.
 - **R75** Live Activity is a Levels Pro feature (ADR-0021); widget push follows the widget's own tier. See open question 1.
@@ -181,13 +185,13 @@ After enrollment (manual):
 
 Apple side (owned by the Swift work, `feature/push-widget-client`):
 
-- [ ] AC20 — Given a Mac push key and body, `PushRelayAuth.headers` yields a signature the relay accepts (shared test vector from `relay/test/helpers.ts` `signingString`).
-- [ ] AC21 — R50–R55: with a fake clock, a run of level changes produces at most one push per 15 min and 48 per day; plug/unplug skips the gap.
-- [ ] AC22 — R16: `invalidTokens` removes those tokens and triggers R72.
+- [x] AC20 — Given a Mac push key and body, `PushRelayAuth.headers` yields a signature the relay accepts. Shared vectors in `relay/test/vectors/push-auth-v1.json` (body bytes, body hash, signing string, token hashes, key format, one CryptoKit and one node:crypto signature) are asserted by `relay/test/vectors.test.ts` and `Shared/Tests/LevelsNetTests/PushAuthVectorTests.swift`.
+- [x] AC21 — R50–R54: with a fake clock, changes inside 15 min coalesce into one push at the gap's end, at most 48 a day (local midnight), plug/unplug and alert-threshold crossing skip the gap, no push while that iPhone's long-poll is open (`WidgetPushSchedulerTests`). R55 (Live Activity) is not built yet.
+- [x] AC22 — R16, R19: `invalidTokens` and 410 remove those tokens and mark the iPhone `renew`; a refused grant stops pushes until a new one arrives.
 
 ## Tests
 
-AC1–AC11 are `vitest` tests in `relay/test/` (`npm test`, 89 tests, Node environment with WebCrypto; the App Attest tests use a generated stand-in root CA because Apple's can't sign test data). AC20–AC22 are Swift Testing unit tests. AC12–AC15 need the paid account and real devices.
+AC1–AC11 are `vitest` tests in `relay/test/` (`npm test`, 101 tests, Node environment with WebCrypto; the App Attest tests use a generated stand-in root CA because Apple's can't sign test data). AC20–AC22 are Swift Testing unit tests. AC12–AC15 need the paid account and real devices.
 
 ## Open questions
 

@@ -2,26 +2,15 @@ import Foundation
 import LevelsModel
 import os
 
-// The Mac's client of the push relay (Cloudflare Worker on feature/push-relay, ADR-0023).
-// Contract: `POST <relayURL>/v1/widget-push`, JSON
+// The Mac's client of the push relay (relay/, ADR-0023, PUSH-001 R10–R19).
+// `POST <relayURL>/v1/widget-push`, JSON
 // `{"tokens":[{"token":"<hex>","env":"development"|"production","kind":"widget"|"liveActivity"}],"payload":{…}}`
-// → 202 accepted, 400 bad request, 401 unauthorized, 429 rate limited.
+// with the `Levels-Grant`, `Levels-Timestamp` and `Levels-Signature` headers (``PushRelayAuth``).
+// → 202 `{"results":[…],"invalidTokens":[…]}`, 400, 401 `{"error":"<code>"}`, 410 all invalid,
+// 429 with Retry-After, 500.
 
-/// Signs a relay request. The relay agent defines the real headers (ADR-0023); until then
-/// ``PlaceholderPushRelayAuth`` sends none and the relay answers 401.
-public protocol PushRelayAuth: Sendable {
-    /// Extra headers for one request with this exact `body`.
-    func headers(for body: Data) async throws -> [String: String]
-}
-
-/// No auth headers. Replace when ADR-0023 fixes the scheme.
-public struct PlaceholderPushRelayAuth: PushRelayAuth {
-    public init() {}
-    public func headers(for body: Data) async throws -> [String: String] { [:] }
-}
-
-/// The payload the relay forwards to APNs. For widgets Apple requires
-/// `{"aps":{"content-changed":true}}` (WidgetKit, "Updating widgets with WidgetKit push notifications").
+/// The payload the relay forwards to APNs. For widgets the relay builds
+/// `{"aps":{"content-changed":true}}` itself and ignores this; it is sent for clarity.
 public struct PushPayload: Codable, Sendable, Equatable {
     public struct APS: Codable, Sendable, Equatable {
         public var contentChanged: Bool
@@ -43,25 +32,28 @@ public struct PushRelayBody: Codable, Sendable, Equatable {
         self.payload = payload
     }
 
-    /// Sorted keys, so the bytes the auth signs are stable.
+    /// Sorted keys. The signature covers these exact bytes, and the same bytes are sent.
     public func encoded() throws -> Data {
         let e = JSONEncoder()
-        e.outputFormatting = [.sortedKeys]
+        e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try e.encode(self)
     }
 }
 
 /// What the relay said.
 public enum PushRelayResult: Sendable, Equatable {
-    /// 202. `invalidTokens`: tokens the relay reports APNs rejected for good (410 or
-    /// BadDeviceToken), from an optional `{"invalidTokens":["<hex>"]}` body; drop them.
+    /// 202. `invalidTokens`: tokens APNs rejected for good (410 or BadDeviceToken); drop them.
     case accepted(invalidTokens: Set<String>)
-    /// 429: try again no sooner than `retryAfter` seconds (the `Retry-After` header; `nil` = not sent).
+    /// 429: try again no sooner than `retryAfter` seconds (`nil` = header not sent).
     case rateLimited(retryAfter: TimeInterval?)
     /// 410: every token of the request is gone; drop them.
     case tokensGone
-    /// 400, 401 and anything else: a bug or missing auth. Not retried before the next change.
+    /// 401 with the R19 code (`grant_expired`, `token_not_granted`, `timestamp_skew`, …).
+    case unauthorized(code: String)
+    /// 400 and other 4xx: a bug. Not retried before the next change.
     case rejected(status: Int)
+    /// 5xx: the relay is misconfigured or failed; back off.
+    case serverError(status: Int)
     /// No answer (network down, DNS, TLS, timeout).
     case unreachable
 }
@@ -78,7 +70,7 @@ public struct URLSessionPushRelayTransport: PushRelayTransport {
     public func post(url: URL, headers: [String: String], body: Data) async throws -> (status: Int, headers: [String: String], body: Data) {
         var request = URLRequest(url: url, timeoutInterval: 15)
         request.httpMethod = "POST"
-        request.httpBody = body
+        request.httpBody = body  // URLSession sends Content-Length, which the relay requires
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { return (0, [:], data) }
@@ -90,35 +82,49 @@ public struct URLSessionPushRelayTransport: PushRelayTransport {
     }
 }
 
+/// Parses and checks the relay base URL. `nil` when empty or not a plain `https` URL.
+enum RelayBaseURL {
+    static func make(_ relayURL: String, path: String) -> URL? {
+        var trimmed = relayURL.trimmingCharacters(in: .whitespaces)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !trimmed.isEmpty, let base = URL(string: trimmed), base.scheme?.lowercased() == "https",
+              base.host()?.isEmpty == false, base.query() == nil, base.user() == nil
+        else { return nil }
+        return URL(string: trimmed + path)
+    }
+}
+
 /// Sends one push request to the relay.
 public struct PushRelayClient: Sendable {
     static let logger = Logger(subsystem: LevelsLog.subsystem, category: "push")
     public static let path = "/v1/widget-push"
+    /// Relay limit per request (PUSH-001 R10).
+    public static let maxTokensPerRequest = 8
 
     public let endpoint: URL
     private let auth: any PushRelayAuth
     private let transport: any PushRelayTransport
+    private let now: @Sendable () -> Date
 
     /// `nil` when `relayURL` is empty or not an `https` URL (push off).
-    public init?(relayURL: String, auth: any PushRelayAuth = PlaceholderPushRelayAuth(),
-                 transport: any PushRelayTransport = URLSessionPushRelayTransport()) {
-        var trimmed = relayURL.trimmingCharacters(in: .whitespaces)
-        while trimmed.hasSuffix("/") { trimmed.removeLast() }
-        guard !trimmed.isEmpty, let base = URL(string: trimmed), base.scheme?.lowercased() == "https",
-              base.host()?.isEmpty == false, base.query() == nil, let endpoint = URL(string: trimmed + Self.path)
-        else { return nil }
+    public init?(relayURL: String, auth: any PushRelayAuth, transport: any PushRelayTransport = URLSessionPushRelayTransport(),
+                 now: @escaping @Sendable () -> Date = Date.init) {
+        guard let endpoint = RelayBaseURL.make(relayURL, path: Self.path) else { return nil }
         self.endpoint = endpoint
         self.auth = auth
         self.transport = transport
+        self.now = now
     }
 
-    public func send(_ tokens: [PushToken], payload: PushPayload = .widgetContentChanged) async -> PushRelayResult {
+    /// Pushes `tokens` (1…8), each covered by one of `grants` (1…4).
+    public func send(_ tokens: [PushToken], grants: [String], payload: PushPayload = .widgetContentChanged) async -> PushRelayResult {
         guard !tokens.isEmpty else { return .accepted(invalidTokens: []) }
         let body: Data
         var headers = ["content-type": "application/json"]
         do {
+            guard tokens.count <= Self.maxTokensPerRequest else { throw PushAuthError.grantCount(tokens.count) }
             body = try PushRelayBody(tokens: tokens, payload: payload).encoded()
-            for (k, v) in try await auth.headers(for: body) { headers[k.lowercased()] = v }
+            for (k, v) in try auth.headers(for: body, path: Self.path, at: now(), grants: grants) { headers[k.lowercased()] = v }
         } catch {
             Self.logger.error("Push relay: could not build the request: \(String(describing: error), privacy: .public)")
             return .rejected(status: 0)
@@ -128,23 +134,27 @@ public struct PushRelayClient: Sendable {
             Self.logger.notice("Push relay not reached: \(String(describing: error), privacy: .public)")
             return .unreachable
         }
-        // Token values are not logged.
+        // Tokens and grants are never logged.
         Self.logger.notice("Push relay answered \(answer.status, privacy: .public) for \(tokens.count, privacy: .public) token(s)")
         return Self.result(status: answer.status, headers: answer.headers, body: answer.body)
     }
 
     /// Pure; unit-tested.
     static func result(status: Int, headers: [String: String], body: Data) -> PushRelayResult {
+        struct Answer: Decodable { var invalidTokens: [String]?; var error: String? }
+        let decoded = try? JSONDecoder().decode(Answer.self, from: body)
         switch status {
         case 200...299:
-            struct Answer: Decodable { var invalidTokens: [String]? }
-            let invalid = (try? JSONDecoder().decode(Answer.self, from: body))?.invalidTokens ?? []
-            return .accepted(invalidTokens: Set(invalid.map { $0.lowercased() }))
+            return .accepted(invalidTokens: Set((decoded?.invalidTokens ?? []).map { $0.lowercased() }))
         case 410:
             return .tokensGone
+        case 401:
+            return .unauthorized(code: decoded?.error ?? "")
         case 429:
             let raw = headers.first { $0.key.lowercased() == "retry-after" }?.value
             return .rateLimited(retryAfter: raw.flatMap { TimeInterval($0.trimmingCharacters(in: .whitespaces)) })
+        case 500...599:
+            return .serverError(status: status)
         default:
             return .rejected(status: status)
         }
