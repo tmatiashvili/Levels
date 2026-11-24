@@ -73,25 +73,24 @@ Levels Pro unlocks other devices, every widget kind, alerts and history on the i
 
 ### Widget gating
 
-- **R14** Families (owner decision O). The widget extension keeps every family in `supportedFamilies`, so the gallery shows all of them. Free users get:
+- **R14** Families (owner decisions O, R, S). The widget extension keeps every family in `supportedFamilies`, so the gallery shows all of them. Free users get:
 
   | Family / place | Free | Pro |
   |---|---|---|
-  | `systemSmall` on the Home Screen | this device only | as UI-003 |
-  | `systemSmall` in StandBy | locked view | as UI-003 |
+  | `systemSmall` (Home Screen and StandBy) | this device or the one free Mac | as UI-003 |
   | `systemMedium`, `systemLarge` | locked view | as UI-003 |
   | `accessoryCircular`, `accessoryRectangular`, `accessoryInline` (Lock Screen) | locked view | as UI-003 |
 
-  Free users may add as many small Home Screen widgets as they like; each shows this device.
-- **R15** StandBy is detected in the view by `@Environment(\.showsWidgetContainerBackground) == false` on `systemSmall` (**Assumption:** true in StandBy and false on the Home Screen; checked on hardware, AC12).
+  Free users may add as many small Home Screen widgets as they like; each shows this device or the one free Mac.
+- **R15** StandBy is free (owner decision S). The widget does not try to detect StandBy.
 - **R16** The locked view: the lock symbol, "Levels Pro", and one line "Open Levels to unlock" (accessory families: lock symbol and "Pro"). Tapping opens `levels://pro` (MON-002 R1). It follows UI-003 R9 rendering modes. It never shows another device's name or level.
-- **R17** In the free small widget, `DeviceChoice` (UI-003 R1) offers only "This iPhone"; "Lowest battery" considers only this device. A Pro choice saved earlier that is no longer allowed falls back to this device.
+- **R17** In the free small widget, `DeviceChoice` (UI-003 R1) offers only "This iPhone" and the one free Mac; "Lowest battery" considers only those two. A Pro choice saved earlier that is no longer allowed falls back to this device.
 - **R18** The widget decides only from `entitlement.json` (R11). It never links `LevelsPurchases` or StoreKit.
 
 ### Gate API for the app
 
-- **R19** `ProGate` answers per feature: `.otherDevices`, `.widgetFamily(_:)`, `.alerts`, `.history`. Every answer is `isPro` today; the per-feature API exists so the owner's open question (one free Mac) changes one function, not the views.
-- **R20** Device list filter: when not Pro, `DeviceListStore` keeps this device and its own accessories as normal rows, and turns every other device into a locked row (MON-002 R6). The iPhone still pairs, still syncs and still reports its own battery to the Mac (ADR-0021 Decision 6). Data is kept, not deleted, when Pro ends.
+- **R19** `ProGate` answers per feature: `.otherDevices`, `.widgetFamily(_:)`, `.alerts`, `.history`. `.otherDevices` lets one paired Mac's own record through for free (owner decision R): the first paired Mac by pairing date; its accessories and every other device need Pro. The other answers are `isPro`. The rule lives in one pure function.
+- **R20** Device list filter: when not Pro, `DeviceListStore` keeps this device, its own accessories and the one free Mac (R19) as normal rows, and folds every other device into one locked card (MON-002 R6). The iPhone still pairs, still syncs and still reports its own battery to the Mac (ADR-0021 Decision 6). Data is kept, not deleted, when Pro ends.
 
 ## Design
 
@@ -168,7 +167,7 @@ Levels Pro unlocks other devices, every widget kind, alerts and history on the i
 - [ ] AC9 — Given state `.unknown` and a trusted Pro cache, then the list shows Pro rows with no locked flash (R12).
 - [ ] AC10 — Given `isPro` changes, then widgets reload once (R13; fake `WidgetCenter`).
 - [ ] AC11 — Given a free cache, then `systemMedium`, `systemLarge` and every accessory family render the locked view, and `systemSmall` on the Home Screen renders this device only; given a Pro cache, all render as UI-003 (R14, R16, R17; provider tests and previews).
-- [ ] AC12 — On real hardware: a free `systemSmall` widget shows the locked view in StandBy and this device on the Home Screen (R15).
+- [ ] AC12 — On real hardware: a free `systemSmall` widget shows this device or the free Mac on the Home Screen and in StandBy (R14, R15).
 - [ ] AC13 — Given not Pro and a hub snapshot with a Mac and AirPods, then the store shows this iPhone as a normal row and the Mac and AirPods as locked rows, and the iPhone still reports its own battery (R20).
 - [ ] AC14 — Log check: no transaction ID or account data in category `store` (Design).
 
@@ -181,12 +180,8 @@ Levels Pro unlocks other devices, every widget kind, alerts and history on the i
 
 ## Open questions
 
-1. **Free tier is thin on the iPhone.** iOS has no public API for AirPods or other accessory levels, so "this device and its accessories" means only the iPhone itself on an iPhone. Options:
-   - (a) As decided: free shows the iPhone only; everything from the Mac is Pro.
-   - (b) Free also shows one paired Mac's own battery; its accessories, other devices, Pro widgets, alerts and history stay Pro. **Lead's recommendation:** gives a free user a reason to pair and keep the app, and still leaves the main value in Pro.
-   - (c) Free shows one paired Mac and its accessories; Pro is widgets, alerts, history and iCloud devices.
-   `ProGate` (R19) makes any of these a one-function change.
+1. ~~Free tier~~ Resolved: owner decision R (option b).
 2. **"One small widget"** is read as "the small Home Screen widget, any number of copies, this device only". Limiting it to one copy would need counting configurations and is easy to get wrong. Confirm.
-3. **StandBy** uses the same small widget. R15 locks it there for free users. Confirm that StandBy should be Pro.
-4. **The Mac shows everything for free**, including the iPhone's battery (ADR-0021 consequences). Confirm that's fine.
+3. ~~StandBy~~ Resolved: free (owner decision S).
+4. ~~Mac free~~ Resolved: yes (owner decision T).
 5. **Prices and trial:** confirm $0.99 / $5.99 with a 1-week trial / $14.99, trial on yearly only.

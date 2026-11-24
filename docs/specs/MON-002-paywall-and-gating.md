@@ -31,8 +31,8 @@ People need to see what Pro adds, what it costs and how to stop paying, in plain
 - **R3** Top to bottom:
   1. Title **"Levels Pro"**. Subtitle **"All your devices, on your iPhone."**
   2. Four lines, each with an SF Symbol:
-     - `laptopcomputer.and.iphone` "See your Mac, AirPods and other devices"
-     - `square.grid.2x2` "Every widget: Lock Screen, StandBy, medium and large"
+     - `laptopcomputer.and.iphone` "See your AirPods and every other device"
+     - `square.grid.2x2` "Every widget: Lock Screen, medium and large"
      - `bell.badge` "Low-battery alerts"
      - `chart.xyaxis.line` "7-day battery history"
   3. Plans (R4).
@@ -133,5 +133,5 @@ People need to see what Pro adds, what it costs and how to stop paying, in plain
 
 ## Open questions
 
-1. **Copy.** The subtitle and four feature lines are a first draft. If the owner picks MON-001 open question (b) or (c), the first feature line changes (for example "See every device, not just your Mac").
+1. **Copy.** First draft; feature lines updated for owner decisions R and S.
 2. **Default plan.** Yearly with the trial is selected by default. Confirm, or prefer no default.
