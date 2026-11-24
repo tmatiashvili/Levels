@@ -11,6 +11,9 @@ public enum DemoWidgetPlan {
     /// them looking live without spending the reload budget.
     public static let reloadAfter: TimeInterval = 30 * 60
 
+    /// Levels Pro hook (DEMO-001 R9): when the widget gate lands, take the provider's gate
+    /// here with `freeMacID` set to `SampleDevices.macID` and pass it to `DeviceEntry`, so demo
+    /// widgets are gated like real ones (both `load` and `timeline` come through this function).
     public static func timeline(snapshot: SnapshotFile, now: Date, selection: DeviceID?) -> Timeline<DeviceEntry> {
         let entry = DeviceEntry(date: now, snapshot: snapshot, preferences: DisplayPreferences(), selection: selection)
         return Timeline(entries: [entry], policy: .after(now.addingTimeInterval(reloadAfter)))
